@@ -2,7 +2,7 @@ from .engine import InferenceRuntime
 from .context import ContextFile, RepositoryContext
 from .kv_cache import KVCacheError, KVCacheStore
 from .manifest import ManifestError, ModelManifest
-from .memory import MemoryLimitError, MemoryPlan, parse_memory_limit, plan_memory
+from .memory import MemoryLimitError, MemoryPlan, RuntimeMemoryUsage, collect_memory_usage, parse_memory_limit, plan_memory
 from .tensor_format import TensorFormatError, TensorHeader, pack_header, read_header
 from .tensor import TensorView
 from .ops import matmul
@@ -24,6 +24,8 @@ __all__ = [
     "ManifestError",
     "MemoryLimitError",
     "MemoryPlan",
+    "RuntimeMemoryUsage",
+    "collect_memory_usage",
     "ModelManifest",
     "TensorFormatError",
     "TensorHeader",
