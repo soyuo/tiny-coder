@@ -59,7 +59,6 @@ class KVCacheStore:
         if layer_index in self._hot:
             value = self._hot.pop(layer_index)
             self._hot[layer_index] = value
-            self._hot_size += len(value)
             return value
         path = self.path_for(layer_index)
         if not path.is_file():

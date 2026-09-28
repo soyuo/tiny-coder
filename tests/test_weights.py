@@ -227,6 +227,8 @@ def test_kv_cache_respects_hot_byte_budget(tmp_path: Path) -> None:
 
     assert store.hot_size == 2
     assert store.hot_layers() == (1,)
+    assert store.get(1) == b"56"
+    assert store.hot_size == 2
 
 
 def test_cpu_tensor_layer_execution(tmp_path: Path) -> None:
