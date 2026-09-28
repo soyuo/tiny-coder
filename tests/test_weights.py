@@ -1,9 +1,11 @@
 from pathlib import Path
+import io
 
 import pytest
 
 from tinycode.runtime.engine import InferenceRuntime
 from tinycode.runtime.manifest import ManifestError, ModelManifest
+from tinycode.runtime.tensor_format import TensorFormatError, pack_header, read_header
 from tinycode.runtime.weights import WeightStore, WeightStoreError
 
 
@@ -72,3 +74,18 @@ def test_manifest_rejects_invalid_layer_count(tmp_path: Path) -> None:
 
     with pytest.raises(ManifestError, match="positive integer"):
         ModelManifest.load(tmp_path)
+
+
+def test_tensor_header_round_trip() -> None:
+    header = pack_header("float16", (2, 3))
+    parsed = read_header(io.BytesIO(header))
+
+    assert parsed.dtype == "float16"
+    assert parsed.shape == (2, 3)
+    assert parsed.data_offset == 16
+    assert parsed.data_size == 12
+
+
+def test_tensor_header_rejects_bad_magic() -> None:
+    with pytest.raises(TensorFormatError, match="unsupported tensor format"):
+        read_header(io.BytesIO(b"BAD!\x01\x01\x01\x00"))
