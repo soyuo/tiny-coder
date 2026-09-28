@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .manifest import ModelManifest
+from .kv_cache import KVCacheStore
 from .tensor_format import read_header
 from .weights import WeightStore
 
@@ -42,11 +43,30 @@ class DecoderKVCache:
     keys: list[Any | None] = field(default_factory=list)
     values: list[Any | None] = field(default_factory=list)
     sequence_length: int = 0
+    disk_store: KVCacheStore | None = None
 
     def reset(self, num_layers: int) -> None:
+        if self.disk_store is not None:
+            self.disk_store.clear()
         self.keys = [None] * num_layers
         self.values = [None] * num_layers
         self.sequence_length = 0
+
+    def load_layer(self, index: int) -> tuple[Any | None, Any | None]:
+        if self.keys[index] is not None:
+            return self.keys[index], self.values[index]
+        if self.disk_store is None or not self.disk_store.contains(index):
+            return None, None
+        return self.disk_store.get_arrays(index)
+
+    def save_layer(self, index: int, key: Any, value: Any) -> None:
+        if self.disk_store is None:
+            self.keys[index] = key
+            self.values[index] = value
+            return
+        self.disk_store.put_arrays(index, key, value)
+        self.keys[index] = None
+        self.values[index] = None
 
 
 class RMSNorm:
@@ -161,8 +181,9 @@ class DecoderOnlyTransformer:
             hidden = block(hidden)
         return self.final_norm(hidden) @ self.lm_head.T
 
-    def new_cache(self) -> DecoderKVCache:
+    def new_cache(self, disk_store: KVCacheStore | None = None) -> DecoderKVCache:
         cache = DecoderKVCache()
+        cache.disk_store = disk_store
         cache.reset(self.config.num_layers)
         return cache
 
@@ -179,9 +200,12 @@ class DecoderOnlyTransformer:
             raise ValueError("cached decoding accepts one token after the initial sequence")
         hidden = self.embedding[token_ids]
         for index, block in enumerate(self.blocks):
+            past_key, past_value = cache.load_layer(index)
+            _validate_cached_kv(self.config, cache.sequence_length, past_key, past_value)
             hidden, cache.keys[index], cache.values[index] = block.forward_cached(
-                hidden, cache.keys[index], cache.values[index]
+                hidden, past_key, past_value
             )
+            cache.save_layer(index, cache.keys[index], cache.values[index])
         cache.sequence_length += int(token_ids.size)
         return self.final_norm(hidden) @ self.lm_head.T
 
@@ -229,8 +253,9 @@ class DiskDecoderOnlyTransformer:
                 hidden = block(hidden)
         return RMSNorm(self.final_norm)(hidden) @ self.lm_head.T
 
-    def new_cache(self) -> DecoderKVCache:
+    def new_cache(self, disk_store: KVCacheStore | None = None) -> DecoderKVCache:
         cache = DecoderKVCache()
+        cache.disk_store = disk_store
         cache.reset(self.config.num_layers)
         return cache
 
@@ -245,12 +270,13 @@ class DiskDecoderOnlyTransformer:
             raise ValueError("cached decoding accepts one token after the initial sequence")
         hidden = self.embedding[token_ids]
         for index in range(self.config.num_layers):
+            past_key, past_value = cache.load_layer(index)
+            _validate_cached_kv(self.config, cache.sequence_length, past_key, past_value)
             with self.weights.hold_packed_layer(index) as layer:
                 packed = layer.packed_layer()
                 block = DecoderBlock(self.config, _load_block_weights(self.config, packed))
-                hidden, cache.keys[index], cache.values[index] = block.forward_cached(
-                    hidden, cache.keys[index], cache.values[index]
-                )
+                hidden, key, value = block.forward_cached(hidden, past_key, past_value)
+            cache.save_layer(index, key, value)
         cache.sequence_length += int(token_ids.size)
         return RMSNorm(self.final_norm)(hidden) @ self.lm_head.T
 
@@ -307,6 +333,16 @@ def _load_block_weights(config: DecoderConfig, packed: Any) -> dict[str, Any]:
             raise ValueError(f"{name} has shape {values.shape}, expected {shape}")
         weights[name] = values
     return weights
+
+
+def _validate_cached_kv(config: DecoderConfig, sequence_length: int, key: Any | None, value: Any | None) -> None:
+    if key is None and value is None:
+        return
+    if key is None or value is None:
+        raise ValueError("cached key and value must be provided together")
+    expected = (config.num_heads, sequence_length, config.hidden_size // config.num_heads)
+    if key.shape != expected or value.shape != expected:
+        raise ValueError(f"cached key/value shape must be {expected}")
 
 
 def _apply_rope(values: Any, theta: float, position_start: int = 0) -> Any:

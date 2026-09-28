@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+import io
 from pathlib import Path
+from typing import Any
 
 
 class KVCacheError(RuntimeError):
@@ -35,6 +37,15 @@ class KVCacheStore:
         self._hot.move_to_end(layer_index)
         self._evict_hot()
 
+    def put_arrays(self, layer_index: int, key: Any, value: Any) -> None:
+        try:
+            import numpy as np
+        except ImportError as exc:
+            raise RuntimeError("NumPy is required for array KV cache") from exc
+        buffer = io.BytesIO()
+        np.savez(buffer, key=np.asarray(key), value=np.asarray(value))
+        self.put(layer_index, buffer.getvalue())
+
     def get(self, layer_index: int) -> bytes:
         """Return a KV entry and promote it to hot storage."""
         if layer_index in self._hot:
@@ -49,6 +60,14 @@ class KVCacheStore:
         self._evict_hot()
         return value
 
+    def get_arrays(self, layer_index: int) -> tuple[Any, Any]:
+        try:
+            import numpy as np
+        except ImportError as exc:
+            raise RuntimeError("NumPy is required for array KV cache") from exc
+        with np.load(io.BytesIO(self.get(layer_index)), allow_pickle=False) as values:
+            return values["key"], values["value"]
+
     def contains(self, layer_index: int) -> bool:
         return layer_index in self._hot or self.path_for(layer_index).is_file()
 
@@ -57,6 +76,11 @@ class KVCacheStore:
 
     def clear_hot(self) -> None:
         self._hot.clear()
+
+    def clear(self) -> None:
+        self._hot.clear()
+        for path in self.cache_dir.glob("layer_*.cache"):
+            path.unlink()
 
     def _evict_hot(self) -> None:
         while len(self._hot) > self.hot_capacity:
