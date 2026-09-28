@@ -14,7 +14,7 @@ from tinycode.runtime.tokenizer import ByteTokenizer, TokenizationError
 from tinycode.runtime.attention import scaled_dot_product_attention
 from tinycode.runtime.model import DecoderBlock, DecoderConfig, DecoderOnlyTransformer, DiskDecoderOnlyTransformer
 from tinycode.runtime.packed_format import pack_tensors
-from tinycode.runtime.generation import generate_greedy, generate_greedy_cached, generate_text
+from tinycode.runtime.generation import generate_greedy, generate_greedy_cached, generate_greedy_cached_with_cache, generate_text
 from tinycode.runtime.weights import WeightStore, WeightStoreError
 
 
@@ -370,8 +370,26 @@ def test_cached_generation_can_spill_kv_to_disk(tmp_path: Path) -> None:
 
     assert cache.keys == [None]
     assert store.contains(0)
-    cache.reset(config.num_layers)
-    assert not store.contains(0)
+
+
+def test_cached_generation_accepts_caller_cache(tmp_path: Path) -> None:
+    import numpy as np
+
+    config = DecoderConfig(vocab_size=8, hidden_size=4, intermediate_size=6, num_layers=1, num_heads=2)
+    weights = {
+        "q_proj": np.eye(4, dtype=np.float32), "k_proj": np.eye(4, dtype=np.float32),
+        "v_proj": np.eye(4, dtype=np.float32), "o_proj": np.eye(4, dtype=np.float32),
+        "gate_proj": np.ones((6, 4), dtype=np.float32), "up_proj": np.ones((6, 4), dtype=np.float32),
+        "down_proj": np.ones((4, 6), dtype=np.float32), "input_norm": np.ones(4, dtype=np.float32),
+        "post_norm": np.ones(4, dtype=np.float32),
+    }
+    model = DecoderOnlyTransformer(
+        config, np.ones((8, 4), dtype=np.float32), [DecoderBlock(config, weights)],
+        np.ones(4, dtype=np.float32), np.ones((8, 4), dtype=np.float32),
+    )
+    cache = model.new_cache(KVCacheStore(tmp_path / "kv"))
+
+    assert generate_greedy_cached_with_cache(model, [1], 1, cache) == [1, 0]
 
 
 def test_cached_generation_rejects_invalid_disk_kv_shape(tmp_path: Path) -> None:

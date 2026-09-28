@@ -10,7 +10,7 @@ from .runtime.tokenizer import ByteTokenizer, TokenizationError
 from .runtime.attention import scaled_dot_product_attention
 from .runtime.model import DecoderBlock, DecoderConfig, DecoderKVCache, DecoderOnlyTransformer, DiskDecoderOnlyTransformer, RMSNorm
 from .runtime.packed_format import PackedLayer, PackedTensor, pack_tensors, read_packed_layer
-from .runtime.generation import generate_greedy, generate_greedy_cached, generate_text
+from .runtime.generation import generate_greedy, generate_greedy_cached, generate_greedy_cached_with_cache, generate_text
 from .runtime.weights import LayerHandle, LayerLease, WeightStore
 
 __all__ = [
@@ -42,6 +42,7 @@ __all__ = [
     "read_packed_layer",
     "generate_greedy",
     "generate_greedy_cached",
+    "generate_greedy_cached_with_cache",
     "generate_text",
     "WeightStore",
     "pack_header",

@@ -39,8 +39,39 @@ def generate_greedy_cached(model: Any, token_ids: list[int], max_new_tokens: int
         raise RuntimeError("NumPy is required for generation") from exc
     if not hasattr(model, "new_cache") or not hasattr(model, "forward_cached"):
         raise TypeError("model must support cached decoding")
-    generated = list(token_ids)
     cache = model.new_cache()
+    return _generate_with_cache(model, token_ids, max_new_tokens, eos_token_id, cache)
+
+
+def generate_greedy_cached_with_cache(
+    model: Any,
+    token_ids: list[int],
+    max_new_tokens: int,
+    cache: Any,
+    eos_token_id: int | None = None,
+) -> list[int]:
+    """Generate tokens with a caller-provided KV cache."""
+    if max_new_tokens < 0:
+        raise ValueError("max_new_tokens must be non-negative")
+    if not token_ids:
+        raise ValueError("token_ids must not be empty")
+    if not hasattr(model, "forward_cached"):
+        raise TypeError("model must support cached decoding")
+    return _generate_with_cache(model, token_ids, max_new_tokens, eos_token_id, cache)
+
+
+def _generate_with_cache(
+    model: Any,
+    token_ids: list[int],
+    max_new_tokens: int,
+    eos_token_id: int | None,
+    cache: Any,
+) -> list[int]:
+    try:
+        import numpy as np
+    except ImportError as exc:
+        raise RuntimeError("NumPy is required for generation") from exc
+    generated = list(token_ids)
     logits = np.asarray(model.forward_cached(np.asarray(generated, dtype=np.int64), cache))
     for _ in range(max_new_tokens):
         if logits.ndim != 2 or logits.shape[0] != 1 and logits.shape[0] != len(generated):
