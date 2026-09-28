@@ -42,6 +42,8 @@ class DecoderConfig:
 class DecoderKVCache:
     keys: list[Any | None] = field(default_factory=list)
     values: list[Any | None] = field(default_factory=list)
+    key_buffers: list[Any | None] = field(default_factory=list)
+    value_buffers: list[Any | None] = field(default_factory=list)
     sequence_length: int = 0
     disk_store: KVCacheStore | None = None
 
@@ -50,6 +52,8 @@ class DecoderKVCache:
             self.disk_store.clear()
         self.keys = [None] * num_layers
         self.values = [None] * num_layers
+        self.key_buffers = [None] * num_layers
+        self.value_buffers = [None] * num_layers
         self.sequence_length = 0
 
     def load_layer(self, index: int) -> tuple[Any | None, Any | None]:
@@ -59,11 +63,38 @@ class DecoderKVCache:
             return None, None
         return self.disk_store.get_arrays(index)
 
-    def save_layer(self, index: int, key: Any, value: Any) -> None:
+    def save_layer(
+        self,
+        index: int,
+        key: Any,
+        value: Any,
+        past_key: Any | None = None,
+        past_value: Any | None = None,
+    ) -> None:
         if self.disk_store is None:
-            self.keys[index] = key
-            self.values[index] = value
+            length = key.shape[1]
+            previous_length = 0 if past_key is None else past_key.shape[1]
+            total_length = previous_length + length
+            buffer = self.key_buffers[index]
+            value_buffer = self.value_buffers[index]
+            if buffer is None or buffer.shape[1] < total_length:
+                capacity = max(4, total_length, 0 if buffer is None else buffer.shape[1] * 2)
+                buffer = _allocate_kv_buffer(key, capacity)
+                value_buffer = _allocate_kv_buffer(value, capacity)
+                if past_key is not None:
+                    buffer[:, :previous_length] = past_key
+                    value_buffer[:, :previous_length] = past_value
+                self.key_buffers[index] = buffer
+                self.value_buffers[index] = value_buffer
+            buffer[:, previous_length:total_length] = key
+            value_buffer[:, previous_length:total_length] = value
+            self.keys[index] = buffer[:, :total_length]
+            self.values[index] = value_buffer[:, :total_length]
             return
+        np = _numpy()
+        if past_key is not None:
+            key = np.concatenate((past_key, key), axis=1)
+            value = np.concatenate((past_value, value), axis=1)
         self.disk_store.put_arrays(index, key, value)
         self.keys[index] = None
         self.values[index] = None
@@ -130,19 +161,21 @@ class DecoderBlock:
         value = (normalized @ self.v_proj.T).reshape(sequence_length, self.config.num_heads, head_size).transpose(1, 0, 2)
         query = _apply_rope(query, self.config.rope_theta, self._position_start(past_key))
         key = _apply_rope(key, self.config.rope_theta, self._position_start(past_key))
-        if past_key is not None:
-            key = np.concatenate((past_key, key), axis=1)
-            value = np.concatenate((past_value, value), axis=1)
-        scores = query @ key.transpose(0, 2, 1) / np.sqrt(head_size)
-        if sequence_length > 1:
-            past_length = 0 if past_key is None else past_key.shape[1]
-            query_positions = np.arange(past_length, past_length + sequence_length)[:, None]
-            key_positions = np.arange(key.shape[1])[None, :]
-            scores = np.where(key_positions > query_positions, -np.inf, scores)
-        scores -= np.max(scores, axis=-1, keepdims=True)
-        probabilities = np.exp(scores)
-        probabilities /= np.sum(probabilities, axis=-1, keepdims=True)
-        attention = probabilities @ value
+        if past_key is None:
+            scores = query @ key.transpose(0, 2, 1) / np.sqrt(head_size)
+            scores = np.where(np.triu(np.ones((sequence_length, sequence_length), dtype=bool), 1), -np.inf, scores)
+            scores -= np.max(scores, axis=-1, keepdims=True)
+            probabilities = np.exp(scores)
+            probabilities /= np.sum(probabilities, axis=-1, keepdims=True)
+            attention = probabilities @ value
+        else:
+            past_scores = query @ past_key.transpose(0, 2, 1) / np.sqrt(head_size)
+            current_scores = query @ key.transpose(0, 2, 1) / np.sqrt(head_size)
+            maximum = np.maximum(np.max(past_scores, axis=-1, keepdims=True), current_scores)
+            past_weights = np.exp(past_scores - maximum)
+            current_weights = np.exp(current_scores - maximum)
+            denominator = np.sum(past_weights, axis=-1, keepdims=True) + current_weights
+            attention = (past_weights @ past_value + current_weights * value) / denominator
         attention = attention.transpose(1, 0, 2).reshape(sequence_length, self.config.hidden_size)
         hidden = hidden + attention @ self.o_proj.T
         normalized = self.post_norm(hidden)
@@ -202,10 +235,8 @@ class DecoderOnlyTransformer:
         for index, block in enumerate(self.blocks):
             past_key, past_value = cache.load_layer(index)
             _validate_cached_kv(self.config, cache.sequence_length, past_key, past_value)
-            hidden, cache.keys[index], cache.values[index] = block.forward_cached(
-                hidden, past_key, past_value
-            )
-            cache.save_layer(index, cache.keys[index], cache.values[index])
+            hidden, key, value = block.forward_cached(hidden, past_key, past_value)
+            cache.save_layer(index, key, value, past_key, past_value)
         cache.sequence_length += int(token_ids.size)
         return self.final_norm(hidden) @ self.lm_head.T
 
@@ -276,7 +307,7 @@ class DiskDecoderOnlyTransformer:
                 packed = layer.packed_layer()
                 block = DecoderBlock(self.config, _load_block_weights(self.config, packed))
                 hidden, key, value = block.forward_cached(hidden, past_key, past_value)
-            cache.save_layer(index, key, value)
+            cache.save_layer(index, key, value, past_key, past_value)
         cache.sequence_length += int(token_ids.size)
         return RMSNorm(self.final_norm)(hidden) @ self.lm_head.T
 
@@ -343,6 +374,11 @@ def _validate_cached_kv(config: DecoderConfig, sequence_length: int, key: Any | 
     expected = (config.num_heads, sequence_length, config.hidden_size // config.num_heads)
     if key.shape != expected or value.shape != expected:
         raise ValueError(f"cached key/value shape must be {expected}")
+
+
+def _allocate_kv_buffer(values: Any, capacity: int) -> Any:
+    np = _numpy()
+    return np.empty((values.shape[0], capacity, values.shape[2]), dtype=values.dtype)
 
 
 def _apply_rope(values: Any, theta: float, position_start: int = 0) -> Any:

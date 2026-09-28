@@ -287,6 +287,39 @@ def test_disk_decoder_loads_one_packed_layer_at_a_time(tmp_path: Path) -> None:
     assert logits.shape == (2, 8)
 
 
+def test_disk_decoder_cached_forward_keeps_previous_kv(tmp_path: Path) -> None:
+    import json
+    import numpy as np
+
+    config = {"num_layers": 1, "vocab_size": 8, "hidden_size": 4, "intermediate_size": 6, "num_heads": 2}
+    (tmp_path / "model.json").write_text(json.dumps(config), encoding="utf-8")
+    for name, array in {
+        "embedding.bin": np.ones((8, 4), dtype=np.float32),
+        "norm.bin": np.ones(4, dtype=np.float32),
+        "lm_head.bin": np.ones((8, 4), dtype=np.float32),
+    }.items():
+        (tmp_path / name).write_bytes(pack_header("float32", array.shape) + array.tobytes())
+    arrays = {
+        "q_proj": np.eye(4, dtype=np.float32), "k_proj": np.eye(4, dtype=np.float32),
+        "v_proj": np.eye(4, dtype=np.float32), "o_proj": np.eye(4, dtype=np.float32),
+        "gate_proj": np.ones((6, 4), dtype=np.float32), "up_proj": np.ones((6, 4), dtype=np.float32),
+        "down_proj": np.ones((4, 6), dtype=np.float32), "input_norm": np.ones(4, dtype=np.float32),
+        "post_norm": np.ones(4, dtype=np.float32),
+    }
+    (tmp_path / "layer_00.bin").write_bytes(
+        pack_tensors([(name, "float32", array.shape, array.tobytes()) for name, array in arrays.items()])
+    )
+    store = KVCacheStore(tmp_path / "kv")
+
+    with DiskDecoderOnlyTransformer.from_model_dir(tmp_path) as model:
+        cache = model.new_cache(store)
+        model.forward_cached(np.array([1], dtype=np.int64), cache)
+        model.forward_cached(np.array([2], dtype=np.int64), cache)
+
+    key, _ = store.get_arrays(0)
+    assert key.shape[1] == 2
+
+
 def test_greedy_generation_stops_at_eos() -> None:
     import numpy as np
 
@@ -317,6 +350,31 @@ def test_cached_generation_reuses_decoder_states() -> None:
     result = generate_greedy_cached(model, [1, 2], max_new_tokens=2)
 
     assert result == [1, 2, 0, 0]
+
+
+def test_cached_generation_appends_to_reusable_kv_buffer() -> None:
+    import numpy as np
+
+    config = DecoderConfig(vocab_size=8, hidden_size=4, intermediate_size=6, num_layers=1, num_heads=2)
+    weights = {
+        "q_proj": np.eye(4, dtype=np.float32), "k_proj": np.eye(4, dtype=np.float32),
+        "v_proj": np.eye(4, dtype=np.float32), "o_proj": np.eye(4, dtype=np.float32),
+        "gate_proj": np.ones((6, 4), dtype=np.float32), "up_proj": np.ones((6, 4), dtype=np.float32),
+        "down_proj": np.ones((4, 6), dtype=np.float32), "input_norm": np.ones(4, dtype=np.float32),
+        "post_norm": np.ones(4, dtype=np.float32),
+    }
+    model = DecoderOnlyTransformer(
+        config, np.ones((8, 4), dtype=np.float32), [DecoderBlock(config, weights)],
+        np.ones(4, dtype=np.float32), np.ones((8, 4), dtype=np.float32),
+    )
+    cache = model.new_cache()
+
+    model.forward_cached(np.array([1], dtype=np.int64), cache)
+    buffer = cache.key_buffers[0]
+    model.forward_cached(np.array([2], dtype=np.int64), cache)
+
+    assert cache.key_buffers[0] is buffer
+    assert cache.keys[0].shape[1] == 2
 
 
 def test_cached_logits_match_full_prefix_logits() -> None:
