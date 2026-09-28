@@ -51,6 +51,7 @@ def train_jsonl(
     output_dir: str | Path,
     config: TrainConfig | None = None,
     validation_path: str | Path | None = None,
+    resume_checkpoint: str | Path | None = None,
 ) -> dict[str, Any]:
     torch, _ = _torch()
     config = config or TrainConfig()
@@ -59,6 +60,13 @@ def train_jsonl(
     dataset = JsonlCodeDataset(path, config.model.max_sequence_length)
     model = TinyCodeDecoder(config.model).to(config.device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
+    if resume_checkpoint is not None:
+        payload = torch.load(resume_checkpoint, map_location=config.device, weights_only=False)
+        if payload.get("config") != config.model.to_dict():
+            raise ValueError("resume checkpoint config does not match training config")
+        model.load_state_dict(payload["model"])
+        if "optimizer" in payload:
+            optimizer.load_state_dict(payload["optimizer"])
     loss_fn = torch.nn.CrossEntropyLoss()
     loader = torch.utils.data.DataLoader(
         dataset,
@@ -85,12 +93,27 @@ def train_jsonl(
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     checkpoint = output / "checkpoint.pt"
-    torch.save({"model": model.state_dict(), "config": config.model.to_dict(), "loss": losses[-1], "validation_loss": validation_loss}, checkpoint)
+    torch.save(
+        {
+            "model": model.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "config": config.model.to_dict(),
+            "loss": losses[-1],
+            "validation_loss": validation_loss,
+        },
+        checkpoint,
+    )
     (output / "training.json").write_text(
         json.dumps({"config": asdict(config), "steps": len(losses), "loss": losses[-1], "validation_loss": validation_loss}, default=lambda value: asdict(value)),
         encoding="utf-8",
     )
-    return {"checkpoint": str(checkpoint), "steps": len(losses), "loss": losses[-1], "validation_loss": validation_loss}
+    return {
+        "checkpoint": str(checkpoint),
+        "steps": len(losses),
+        "loss": losses[-1],
+        "validation_loss": validation_loss,
+        "resumed": resume_checkpoint is not None,
+    }
 
 
 def load_checkpoint(path: str | Path, device: str = "cpu") -> tuple[Any, TorchDecoderConfig]:

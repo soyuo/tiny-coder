@@ -40,6 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--heads", type=int, default=8)
     train.add_argument("--device", default="cpu")
     train.add_argument("--validation-data", type=Path)
+    train.add_argument("--resume", type=Path)
     export = commands.add_parser("export")
     export.add_argument("--checkpoint", type=Path, required=True)
     export.add_argument("--output", type=Path, required=True)
@@ -72,7 +73,13 @@ def train_command(args: argparse.Namespace) -> int:
             learning_rate=args.learning_rate,
             device=args.device,
         )
-        result = train_jsonl(args.data, args.output, config, validation_path=args.validation_data)
+        result = train_jsonl(
+            args.data,
+            args.output,
+            config,
+            validation_path=args.validation_data,
+            resume_checkpoint=args.resume,
+        )
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"error: {exc}")
         return 2
