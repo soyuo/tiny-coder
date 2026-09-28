@@ -36,12 +36,6 @@ class LayerHandle:
         self.mapping.close()
         self._file.close()
 
-    def __enter__(self) -> "LayerHandle":
-        return self
-
-    def __exit__(self, *_: object) -> None:
-        self.close()
-
     def __len__(self) -> int:
         return self.size
 
@@ -200,18 +194,22 @@ class WeightStore:
             raise
         return layer
 
-    def prefetch_layer(self, index: int) -> LayerHandle:
+    def prefetch_layer(self, index: int) -> None:
         """Load a layer into the cache."""
-        return self.load_layer(index, lease=False)
+        self.load_layer(index, lease=False)
 
-    def prefetch_layer_async(self, index: int) -> Future[LayerHandle]:
+    def prefetch_layer_async(self, index: int) -> Future[None]:
         """Load a layer on the prefetch worker."""
         return self._prefetcher.submit(self.prefetch_layer, index)
 
     def close(self) -> None:
         self._prefetcher.shutdown(wait=True, cancel_futures=True)
-        for index in list(self._cache):
-            self.unload_layer(index)
+        with self._lock:
+            handles = list(self._cache.values())
+            self._cache.clear()
+            self._pinned.clear()
+        for handle in handles:
+            handle.close()
 
     def __enter__(self) -> "WeightStore":
         return self

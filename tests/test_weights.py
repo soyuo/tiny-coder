@@ -121,9 +121,10 @@ def test_weight_store_prefetches_on_worker(tmp_path: Path) -> None:
     write_layer(tmp_path, 0, b"zero")
 
     with WeightStore(tmp_path) as store:
-        layer = store.prefetch_layer_async(0).result(timeout=2)
-        assert layer.read() == b"zero"
-        assert store.cached_layers() == (0,)
+        assert store.prefetch_layer_async(0).result(timeout=2) is None
+        with store.hold_layer(0) as layer:
+            assert layer.read() == b"zero"
+        assert store.cached_layers() == ()
 
 
 def test_kv_cache_spills_cold_entries_to_disk(tmp_path: Path) -> None:
