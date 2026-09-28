@@ -120,6 +120,7 @@ class WeightStore:
         self._lock = RLock()
         self._pinned: dict[int, int] = {}
         self._prefetcher = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tinycode-prefetch")
+        self._closed = False
 
     def layer_path(self, index: int) -> Path:
         if index < 0:
@@ -134,6 +135,8 @@ class WeightStore:
     def load_layer(self, index: int, *, lease: bool = True) -> LayerHandle:
         """Map a layer and return its handle."""
         with self._lock:
+            if self._closed:
+                raise RuntimeError("weight store is closed")
             if index in self._cache:
                 handle = self._cache.pop(index)
                 if lease:
@@ -234,8 +237,11 @@ class WeightStore:
 
     def close(self) -> None:
         with self._lock:
+            if self._closed:
+                return
             if any(handle.leases > 0 for handle in self._cache.values()):
                 raise RuntimeError("cannot close weight store while layers are leased")
+            self._closed = True
         self._prefetcher.shutdown(wait=True, cancel_futures=True)
         with self._lock:
             handles = list(self._cache.values())
