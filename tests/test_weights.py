@@ -1,6 +1,7 @@
 from pathlib import Path
 import io
 
+import numpy as np
 import pytest
 
 from tinycode.runtime.engine import InferenceRuntime
@@ -284,6 +285,23 @@ def test_scaled_dot_product_attention_returns_finite_values() -> None:
     assert result.shape == (1, 1)
     assert result[0, 0] > 2.0
     assert result[0, 0] < 4.0
+
+
+def test_scaled_dot_product_attention_supports_batches() -> None:
+    query = np.array([[[1.0, 0.0]], [[0.0, 1.0]]], dtype=np.float32)
+    key = np.array([[[1.0, 0.0], [0.0, 1.0]], [[1.0, 0.0], [0.0, 1.0]]], dtype=np.float32)
+    value = np.array([[[2.0], [4.0]], [[3.0], [5.0]]], dtype=np.float32)
+
+    result = scaled_dot_product_attention(query, key, value)
+
+    assert result.shape == (2, 1, 1)
+    np.testing.assert_allclose(result[0], scaled_dot_product_attention(query[0], key[0], value[0]))
+    np.testing.assert_allclose(result[1], scaled_dot_product_attention(query[1], key[1], value[1]))
+
+
+def test_scaled_dot_product_attention_rejects_mismatched_batches() -> None:
+    with pytest.raises(ValueError, match="batch dimensions"):
+        scaled_dot_product_attention(np.zeros((2, 1, 2)), np.zeros((1, 2, 2)), np.zeros((1, 2, 1)))
 
 
 def test_decoder_only_transformer_returns_next_token_logits() -> None:

@@ -31,7 +31,7 @@ layer needed for the current computation.
   context, and runtime reserve estimates and applied to runtime caches.
 - CPU inference core: complete — mapped tensors can be passed to CPU executors.
 - tokenizer baseline: complete — UTF-8 text has a reversible byte-token representation.
-- attention core: in progress — CPU scaled dot-product attention is available for 2D sequences.
+- attention core: complete — CPU scaled dot-product attention supports 2D and batched 3D sequences.
 - decoder-only block: complete — multi-head causal attention, RMSNorm, SwiGLU, and residual paths are connected.
 - packed layer format: complete — one `layer_XX.bin` can contain named tensor payloads.
 - disk decoder loading: complete — decoder layers are materialized from packed files on demand.
