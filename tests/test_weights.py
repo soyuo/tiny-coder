@@ -7,6 +7,7 @@ from tinycode.runtime.engine import InferenceRuntime
 from tinycode.runtime.context import RepositoryContext
 from tinycode.runtime.kv_cache import KVCacheError, KVCacheStore
 from tinycode.runtime.manifest import ManifestError, ModelManifest
+from tinycode.runtime.memory import parse_memory_limit
 from tinycode.runtime.tensor_format import TensorFormatError, pack_header, read_header
 from tinycode.runtime.weights import WeightStore, WeightStoreError
 
@@ -148,3 +149,8 @@ def test_repository_context_returns_relevant_files_with_limits(tmp_path: Path) -
     assert len(results) == 1
     assert results[0].path.name == "auth.py"
     assert len(results[0].text) == 20
+
+
+def test_memory_limit_parser() -> None:
+    assert parse_memory_limit("512M") == 512 * 1024**2
+    assert parse_memory_limit("1G") == 1024**3

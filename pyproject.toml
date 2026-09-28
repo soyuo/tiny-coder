@@ -12,5 +12,8 @@ dependencies = []
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[project.scripts]
+tinycode = "tinycode.cli:main"
+
 [tool.setuptools.packages.find]
 include = ["tinycode*"]

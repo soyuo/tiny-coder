@@ -26,6 +26,7 @@ layer needed for the current computation.
 - async prefetch: complete — a single worker can warm the next layer without blocking the caller.
 - disk-backed KV cache: complete — hot entries are bounded and older entries remain on disk.
 - repository context search: complete — only ranked, limited files enter context.
+- CLI configuration: complete — `run` validates model, memory, layer-cache, and KV-cache settings.
 - asynchronous prefetch worker: pending
 - KV cache storage: pending
 - repository context retrieval: pending
