@@ -1,8 +1,9 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 
-from tinycode.cli import build_parser, run_command
+from tinycode.cli import build_parser, main, run_command
 from tinycode.runtime.packed_format import pack_tensors
 from tinycode.runtime.tensor_format import pack_header
 
@@ -86,3 +87,12 @@ def test_run_command_reports_selected_repository_context(tmp_path: Path, capsys)
 
     assert run_command(args) == 0
     assert "context files: 1" in capsys.readouterr().out
+
+
+def test_train_command_writes_checkpoint(tmp_path: Path, capsys) -> None:
+    pytest.importorskip("torch")
+    data = tmp_path / "data.jsonl"
+    data.write_text('{"text":"def add(a, b): return a + b;"}\n', encoding="utf-8")
+    assert main(["train", "--data", str(data), "--output", str(tmp_path / "out"), "--block-size", "8", "--batch-size", "1", "--hidden-size", "16", "--intermediate-size", "32", "--layers", "1", "--heads", "2"]) == 0
+    assert (tmp_path / "out" / "checkpoint.pt").is_file()
+    assert "steps:" in capsys.readouterr().out

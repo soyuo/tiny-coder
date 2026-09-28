@@ -12,6 +12,7 @@ from .runtime.manifest import ModelManifest, ManifestError
 from .runtime.memory import MemoryLimitError, parse_memory_limit, plan_memory
 from .runtime.model import DiskDecoderOnlyTransformer
 from .runtime.tokenizer import ByteTokenizer, TokenizationError
+from .training import TorchDecoderConfig, TrainConfig, train_jsonl
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -26,6 +27,18 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--prompt")
     run.add_argument("--repository", type=Path)
     run.add_argument("--max-new-tokens", type=int, default=32)
+    train = commands.add_parser("train")
+    train.add_argument("--data", type=Path, required=True)
+    train.add_argument("--output", type=Path, required=True)
+    train.add_argument("--block-size", type=int, default=256)
+    train.add_argument("--batch-size", type=int, default=4)
+    train.add_argument("--epochs", type=int, default=1)
+    train.add_argument("--learning-rate", type=float, default=3e-4)
+    train.add_argument("--hidden-size", type=int, default=256)
+    train.add_argument("--intermediate-size", type=int, default=768)
+    train.add_argument("--layers", type=int, default=4)
+    train.add_argument("--heads", type=int, default=8)
+    train.add_argument("--device", default="cpu")
     return parser
 
 
@@ -33,7 +46,34 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "run":
         return run_command(args)
+    if args.command == "train":
+        return train_command(args)
     return 2
+
+
+def train_command(args: argparse.Namespace) -> int:
+    try:
+        config = TrainConfig(
+            model=TorchDecoderConfig(
+                hidden_size=args.hidden_size,
+                intermediate_size=args.intermediate_size,
+                num_layers=args.layers,
+                num_heads=args.heads,
+                max_sequence_length=args.block_size,
+            ),
+            batch_size=args.batch_size,
+            epochs=args.epochs,
+            learning_rate=args.learning_rate,
+            device=args.device,
+        )
+        result = train_jsonl(args.data, args.output, config)
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"error: {exc}")
+        return 2
+    print(f"checkpoint: {result['checkpoint']}")
+    print(f"steps: {result['steps']}")
+    print(f"loss: {result['loss']:.6f}")
+    return 0
 
 
 def run_command(args: argparse.Namespace) -> int:
