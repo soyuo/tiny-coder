@@ -148,7 +148,7 @@ def test_repository_context_returns_relevant_files_with_limits(tmp_path: Path) -
 
     assert len(results) == 1
     assert results[0].path.name == "auth.py"
-    assert len(results[0].text) == 20
+    assert len(results[0].text.encode("utf-8")) <= 20
 
 
 def test_memory_limit_parser() -> None:

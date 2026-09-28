@@ -16,7 +16,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--model", type=Path, required=True)
     run.add_argument("--memory-limit", default="1G")
     run.add_argument("--layer-cache", type=int, default=1)
-    run.add_argument("--kv-cache", choices=("disk", "ram"), default="disk")
+    run.add_argument("--kv-cache", choices=("disk",), default="disk")
     return parser
 
 

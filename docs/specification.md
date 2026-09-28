@@ -13,8 +13,8 @@ layer needed for the current computation.
 - A completed layer is unloaded before the next layer is processed.
 - The runtime should support mmap-based weight access where possible.
 - Layer cache capacity is controlled by a memory budget or explicit cache size.
-- KV cache paging and repository context retrieval are planned subsystems, not
-  part of the first implementation unit.
+- KV cache paging and repository context retrieval are implemented as separate
+  runtime components.
 
 ## Implementation state
 
@@ -27,7 +27,3 @@ layer needed for the current computation.
 - disk-backed KV cache: complete — hot entries are bounded and older entries remain on disk.
 - repository context search: complete — only ranked, limited files enter context.
 - CLI configuration: complete — `run` validates model, memory, layer-cache, and KV-cache settings.
-- asynchronous prefetch worker: pending
-- KV cache storage: pending
-- repository context retrieval: pending
-- CLI and automatic memory budgeting: pending

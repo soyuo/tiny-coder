@@ -40,7 +40,9 @@ class RepositoryContext:
                 continue
             score = self._score(path, text, terms)
             if score:
-                matches.append(ContextFile(path, text[: self.max_bytes], score))
+                encoded = text.encode("utf-8")[: self.max_bytes]
+                limited_text = encoded.decode("utf-8", errors="ignore")
+                matches.append(ContextFile(path, limited_text, score))
         matches.sort(key=lambda item: (-item.score, str(item.path)))
         return matches[: self.max_files]
 
@@ -54,7 +56,7 @@ class RepositoryContext:
 
     @staticmethod
     def _terms(query: str) -> tuple[str, ...]:
-        return tuple(dict.fromkeys(re.findall(r"[A-Za-z0-9_]+", query.lower())))
+        return tuple(dict.fromkeys(re.findall(r"\w+", query.lower(), re.UNICODE)))
 
     @staticmethod
     def _score(path: Path, text: str, terms: tuple[str, ...]) -> int:
