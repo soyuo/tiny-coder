@@ -280,13 +280,13 @@ class DiskDecoderOnlyTransformer:
             self.lm_head, resource = _load_tensor_file(self.model_dir / "lm_head.bin")
             self._tensor_resources.append(resource)
         except Exception:
-            self.weights.close()
             self.embedding = None
             self.final_norm = None
             self.lm_head = None
-            for mapping, file_handle in self._tensor_resources:
-                mapping.close()
-                file_handle.close()
+            try:
+                self.weights.close()
+            finally:
+                _close_tensor_resources(self._tensor_resources)
             raise
 
     @classmethod
@@ -357,13 +357,13 @@ class DiskDecoderOnlyTransformer:
         return RMSNorm(self.final_norm)(hidden) @ self.lm_head.T
 
     def close(self) -> None:
+        resources = self._tensor_resources
+        self._tensor_resources = []
         self.weights.close()
         self.embedding = None
         self.final_norm = None
         self.lm_head = None
-        for mapping, file_handle in self._tensor_resources:
-            mapping.close()
-            file_handle.close()
+        _close_tensor_resources(resources)
 
     def __enter__(self) -> "DiskDecoderOnlyTransformer":
         return self
@@ -388,6 +388,18 @@ def _load_tensor_file(path: Path) -> Any:
             mapping.close()
         file_handle.close()
         raise
+
+
+def _close_tensor_resources(resources: list[tuple[Any, Any]]) -> None:
+    for mapping, file_handle in resources:
+        try:
+            mapping.close()
+        except (BufferError, OSError, ValueError):
+            pass
+        try:
+            file_handle.close()
+        except (OSError, ValueError):
+            pass
 
 
 def _load_block_weights(config: DecoderConfig, packed: Any) -> dict[str, Any]:
