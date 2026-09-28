@@ -272,6 +272,8 @@ class DiskDecoderOnlyTransformer:
         )
         self.prefetch = prefetch and layer_cache > 1
         self._tensor_resources = []
+        self._closed = False
+        self._closed = False
         try:
             self.embedding, resource = _load_tensor_file(self.model_dir / "embedding.bin")
             self._tensor_resources.append(resource)
@@ -357,13 +359,18 @@ class DiskDecoderOnlyTransformer:
         return RMSNorm(self.final_norm)(hidden) @ self.lm_head.T
 
     def close(self) -> None:
+        if self._closed:
+            return
         resources = self._tensor_resources
         self._tensor_resources = []
-        self.weights.close()
-        self.embedding = None
-        self.final_norm = None
-        self.lm_head = None
-        _close_tensor_resources(resources)
+        try:
+            self.weights.close()
+        finally:
+            self.embedding = None
+            self.final_norm = None
+            self.lm_head = None
+            _close_tensor_resources(resources)
+            self._closed = True
 
     def __enter__(self) -> "DiskDecoderOnlyTransformer":
         return self

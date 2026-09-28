@@ -139,6 +139,17 @@ def test_weight_store_respects_byte_budget(tmp_path: Path) -> None:
         assert store.cached_layers() == (1,)
 
 
+def test_weight_store_rejects_load_after_close(tmp_path: Path) -> None:
+    write_layer(tmp_path, 0, b"layer")
+    store = WeightStore(tmp_path)
+
+    store.close()
+    store.close()
+
+    with pytest.raises(RuntimeError, match="weight store is closed"):
+        store.load_layer(0)
+
+
 def test_kv_cache_spills_cold_entries_to_disk(tmp_path: Path) -> None:
     cache = KVCacheStore(tmp_path / "kv", hot_capacity=1)
     cache.put(0, b"zero")
@@ -412,6 +423,24 @@ def test_disk_decoder_cleans_up_if_weight_store_close_fails(tmp_path: Path, monk
         DiskDecoderOnlyTransformer.from_model_dir(tmp_path)
 
     assert all(mapping.closed and file_handle.closed for mapping, file_handle in resources)
+
+
+def test_disk_decoder_close_is_idempotent(tmp_path: Path) -> None:
+    import json
+    import numpy as np
+
+    config = {"num_layers": 1, "vocab_size": 8, "hidden_size": 4, "intermediate_size": 6, "num_heads": 2}
+    (tmp_path / "model.json").write_text(json.dumps(config), encoding="utf-8")
+    for name, array in {
+        "embedding.bin": np.ones((8, 4), dtype=np.float32),
+        "norm.bin": np.ones(4, dtype=np.float32),
+        "lm_head.bin": np.ones((8, 4), dtype=np.float32),
+    }.items():
+        (tmp_path / name).write_bytes(pack_header("float32", array.shape) + array.tobytes())
+
+    model = DiskDecoderOnlyTransformer.from_model_dir(tmp_path)
+    model.close()
+    model.close()
 
 
 def test_disk_decoder_cached_forward_keeps_previous_kv(tmp_path: Path) -> None:
