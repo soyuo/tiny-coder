@@ -457,7 +457,7 @@ def test_disk_decoder_cleans_up_if_weight_store_close_fails(tmp_path: Path, monk
 
     monkeypatch.setattr(model_module, "_load_tensor_file", fail_on_second_load)
     monkeypatch.setattr(model_module.WeightStore, "close", fail_close)
-    with pytest.raises(RuntimeError, match="cannot close weights"):
+    with pytest.raises(OSError, match="cannot load norm"):
         DiskDecoderOnlyTransformer.from_model_dir(tmp_path)
 
     assert all(mapping.closed and file_handle.closed for mapping, file_handle in resources)
