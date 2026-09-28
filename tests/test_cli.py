@@ -96,3 +96,16 @@ def test_train_command_writes_checkpoint(tmp_path: Path, capsys) -> None:
     assert main(["train", "--data", str(data), "--output", str(tmp_path / "out"), "--block-size", "8", "--batch-size", "1", "--hidden-size", "16", "--intermediate-size", "32", "--layers", "1", "--heads", "2"]) == 0
     assert (tmp_path / "out" / "checkpoint.pt").is_file()
     assert "steps:" in capsys.readouterr().out
+
+
+def test_export_command_writes_packed_model(tmp_path: Path, capsys) -> None:
+    torch = pytest.importorskip("torch")
+    from tinycode.training import TinyCodeDecoder, TorchDecoderConfig
+
+    config = TorchDecoderConfig(hidden_size=16, intermediate_size=32, num_layers=1, num_heads=2, max_sequence_length=8)
+    checkpoint = tmp_path / "checkpoint.pt"
+    torch.save({"model": TinyCodeDecoder(config).state_dict(), "config": config.to_dict()}, checkpoint)
+
+    assert main(["export", "--checkpoint", str(checkpoint), "--output", str(tmp_path / "model")]) == 0
+    assert (tmp_path / "model" / "model.json").is_file()
+    assert "model:" in capsys.readouterr().out
