@@ -69,3 +69,20 @@ def test_run_command_generates_with_disk_decoder(tmp_path: Path, capsys) -> None
     output = capsys.readouterr().out
     assert "prefetch: enabled" in output
     assert "KV cache: disk" in output
+
+
+def test_run_command_reports_selected_repository_context(tmp_path: Path, capsys) -> None:
+    model_dir = tmp_path / "model"
+    repository = tmp_path / "repo"
+    write_decoder_fixture(model_dir)
+    repository.mkdir()
+    (repository / "auth.py").write_text("def refresh_token(): pass\n", encoding="utf-8")
+    args = build_parser().parse_args(
+        [
+            "run", "--model", str(model_dir), "--memory-limit", "16K",
+            "--repository", str(repository), "--prompt", "refresh token", "--max-new-tokens", "0",
+        ]
+    )
+
+    assert run_command(args) == 0
+    assert "context files: 1" in capsys.readouterr().out
