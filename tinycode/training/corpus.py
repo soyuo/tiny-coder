@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import hashlib
 import json
+import os
 from pathlib import Path
 
 
@@ -52,6 +53,13 @@ def _repo_bucket(name: str, validation_ratio: float) -> str:
     return "validation" if value < threshold else "train"
 
 
+def _source_files(repository: Path):
+    for root, directories, files in os.walk(repository):
+        directories[:] = [directory for directory in directories if directory not in IGNORED_DIRS]
+        for filename in files:
+            yield Path(root) / filename
+
+
 def build_corpus(
     source_dir: str | Path,
     output_dir: str | Path,
@@ -78,9 +86,7 @@ def build_corpus(
             stats.repositories += 1
             bucket = _repo_bucket(repository.name, validation_ratio)
             destination = validation_file if bucket == "validation" else train_file
-            for path in sorted(repository.rglob("*")):
-                if not path.is_file():
-                    continue
+            for path in sorted(_source_files(repository)):
                 if any(part in IGNORED_DIRS for part in path.relative_to(repository).parts):
                     continue
                 if _is_secret_file(path):
