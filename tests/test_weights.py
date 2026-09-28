@@ -193,6 +193,16 @@ def test_repository_context_returns_relevant_files_with_limits(tmp_path: Path) -
     assert len(results[0].text.encode("utf-8")) <= 20
 
 
+def test_repository_context_applies_byte_limit_across_files(tmp_path: Path) -> None:
+    (tmp_path / "one.py").write_text("refresh token one", encoding="utf-8")
+    (tmp_path / "two.py").write_text("refresh token two", encoding="utf-8")
+
+    results = RepositoryContext(tmp_path, max_files=2, max_bytes=20).search("refresh token")
+
+    assert len(results) == 2
+    assert sum(len(item.text.encode("utf-8")) for item in results) <= 20
+
+
 def test_memory_limit_parser() -> None:
     assert parse_memory_limit("512M") == 512 * 1024**2
     assert parse_memory_limit("1G") == 1024**3
