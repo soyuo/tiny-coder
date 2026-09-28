@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from tinycode.training.dataset import JsonlCodeDataset
+from tinycode.training.corpus import build_corpus
 from tinycode.training.model import TorchDecoderConfig
 from tinycode.training.train import _collate_blocks
 
@@ -44,6 +45,24 @@ def test_training_collate_builds_batch_tensor() -> None:
 
     assert inputs == ([[1, 2], [4, 5]], "long")
     assert targets == ([[2, 3], [5, 6]], "long")
+
+
+def test_build_corpus_filters_files_and_splits_repositories(tmp_path: Path) -> None:
+    source = tmp_path / "repos"
+    repo = source / "org--repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "node_modules").mkdir()
+    (repo / "src" / "main.py").write_text("print('ok')\n", encoding="utf-8")
+    (repo / "src" / ".env").write_text("TOKEN=secret\n", encoding="utf-8")
+    (repo / "node_modules" / "ignored.js").write_text("ignored\n", encoding="utf-8")
+    (repo / "image.bin").write_bytes(b"\x00\x01")
+
+    result = build_corpus(source, tmp_path / "dataset", validation_ratio=0)
+
+    assert result["files"] == 1
+    assert result["train_files"] == 1
+    assert result["validation_files"] == 0
+    assert "print('ok')" in (tmp_path / "dataset" / "train.jsonl").read_text(encoding="utf-8")
 
 
 def test_train_jsonl_records_validation_loss(tmp_path: Path) -> None:
