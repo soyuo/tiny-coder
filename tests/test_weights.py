@@ -4,6 +4,7 @@ import io
 import pytest
 
 from tinycode.runtime.engine import InferenceRuntime
+from tinycode.runtime.kv_cache import KVCacheError, KVCacheStore
 from tinycode.runtime.manifest import ManifestError, ModelManifest
 from tinycode.runtime.tensor_format import TensorFormatError, pack_header, read_header
 from tinycode.runtime.weights import WeightStore, WeightStoreError
@@ -115,3 +116,21 @@ def test_weight_store_prefetches_on_worker(tmp_path: Path) -> None:
         layer = store.prefetch_layer_async(0).result(timeout=2)
         assert layer.read() == b"zero"
         assert store.cached_layers() == (0,)
+
+
+def test_kv_cache_spills_cold_entries_to_disk(tmp_path: Path) -> None:
+    cache = KVCacheStore(tmp_path / "kv", hot_capacity=1)
+    cache.put(0, b"zero")
+    cache.put(1, b"one")
+
+    assert cache.hot_layers() == (1,)
+    assert (tmp_path / "kv" / "layer_00.cache").read_bytes() == b"zero"
+    assert cache.get(0) == b"zero"
+    assert cache.hot_layers() == (0,)
+
+
+def test_kv_cache_reports_missing_entry(tmp_path: Path) -> None:
+    cache = KVCacheStore(tmp_path / "kv")
+
+    with pytest.raises(KVCacheError, match="does not exist"):
+        cache.get(0)
