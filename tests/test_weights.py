@@ -106,3 +106,12 @@ def test_weight_store_rejects_truncated_tensor_layer(tmp_path: Path) -> None:
     with WeightStore(tmp_path) as store:
         with pytest.raises(TensorFormatError, match="truncated"):
             store.load_tensor_layer(0)
+
+
+def test_weight_store_prefetches_on_worker(tmp_path: Path) -> None:
+    write_layer(tmp_path, 0, b"zero")
+
+    with WeightStore(tmp_path) as store:
+        layer = store.prefetch_layer_async(0).result(timeout=2)
+        assert layer.read() == b"zero"
+        assert store.cached_layers() == (0,)

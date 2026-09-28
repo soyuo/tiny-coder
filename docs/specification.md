@@ -23,6 +23,7 @@ layer needed for the current computation.
 - model manifest: complete — `model.json` provides layer count and filename width.
 - tensor header: complete — dtype, shape, and payload size are validated before decoding.
 - tensor-aware loading: complete — mapped layers can be validated before execution.
+- async prefetch: complete — a single worker can warm the next layer without blocking the caller.
 - asynchronous prefetch worker: pending
 - KV cache storage: pending
 - repository context retrieval: pending
