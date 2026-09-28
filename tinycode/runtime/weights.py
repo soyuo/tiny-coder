@@ -30,6 +30,7 @@ class LayerHandle:
     size: int
     mapping: mmap.mmap
     _file: object
+    leases: int = 0
 
     def close(self) -> None:
         self.mapping.close()
@@ -108,11 +109,13 @@ class WeightStore:
         """Return the manifest layer count, if loaded."""
         return self.manifest.num_layers if self.manifest else None
 
-    def load_layer(self, index: int) -> LayerHandle:
+    def load_layer(self, index: int, *, lease: bool = True) -> LayerHandle:
         """Map a layer and return its handle."""
         with self._lock:
             if index in self._cache:
                 handle = self._cache.pop(index)
+                if lease:
+                    handle.leases += 1
                 self._cache[index] = handle
                 return handle
 
@@ -126,7 +129,7 @@ class WeightStore:
                 if size == 0:
                     raise WeightStoreError(f"layer file is empty: {path}")
                 mapping = mmap.mmap(file_handle.fileno(), length=0, access=mmap.ACCESS_READ)
-                handle = LayerHandle(index, path, size, mapping, file_handle)
+                handle = LayerHandle(index, path, size, mapping, file_handle, 1 if lease else 0)
             except Exception:
                 file_handle.close()
                 raise
@@ -138,9 +141,15 @@ class WeightStore:
     def unload_layer(self, index: int) -> None:
         """Remove a cached layer mapping."""
         with self._lock:
-            handle = self._cache.pop(index, None)
-            if handle is not None:
-                handle.close()
+            handle = self._cache.get(index)
+            if handle is None:
+                return
+            if handle.leases > 0:
+                handle.leases -= 1
+                if handle.leases > 0:
+                    return
+            self._cache.pop(index, None)
+            handle.close()
 
     @contextmanager
     def hold_layer(self, index: int) -> Iterator[LayerHandle]:
@@ -157,9 +166,7 @@ class WeightStore:
                     self._pinned[index] = remaining
                 else:
                     self._pinned.pop(index, None)
-                    handle = self._cache.pop(index, None)
-                    if handle is not None:
-                        handle.close()
+                    self.unload_layer(index)
 
     @contextmanager
     def hold_tensor_layer(self, index: int) -> Iterator[LayerHandle]:
@@ -193,13 +200,13 @@ class WeightStore:
             raise
         return layer
 
-    def prefetch_layer(self, index: int) -> None:
+    def prefetch_layer(self, index: int) -> LayerHandle:
         """Load a layer into the cache."""
-        self.load_layer(index)
+        return self.load_layer(index, lease=False)
 
     def prefetch_layer_async(self, index: int) -> Future[LayerHandle]:
         """Load a layer on the prefetch worker."""
-        return self._prefetcher.submit(self.load_layer, index)
+        return self._prefetcher.submit(self.prefetch_layer, index)
 
     def close(self) -> None:
         self._prefetcher.shutdown(wait=True, cancel_futures=True)
@@ -221,7 +228,7 @@ class WeightStore:
 
     def _evict_excess(self) -> None:
         while len(self._cache) > self.cache_size:
-            candidate = next(((index, handle) for index, handle in self._cache.items() if index not in self._pinned), None)
+            candidate = next(((index, handle) for index, handle in self._cache.items() if index not in self._pinned and handle.leases == 0), None)
             if candidate is None:
                 return
             oldest_index, oldest = candidate

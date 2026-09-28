@@ -39,8 +39,8 @@ def test_cache_evicts_least_recently_used_layer(tmp_path: Path) -> None:
     write_layer(tmp_path, 1, b"one")
 
     with WeightStore(tmp_path, cache_size=1) as store:
-        store.load_layer(0)
-        store.load_layer(1)
+        store.prefetch_layer(0)
+        store.prefetch_layer(1)
         assert store.cached_layers() == (1,)
 
 
