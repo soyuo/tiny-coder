@@ -8,7 +8,7 @@ from pathlib import Path
 from .runtime.generation import generate_greedy_cached_with_cache
 from .runtime.kv_cache import KVCacheStore
 from .runtime.manifest import ModelManifest, ManifestError
-from .runtime.memory import MemoryLimitError, parse_memory_limit
+from .runtime.memory import MemoryLimitError, parse_memory_limit, plan_memory
 from .runtime.model import DiskDecoderOnlyTransformer
 from .runtime.tokenizer import ByteTokenizer, TokenizationError
 
@@ -19,7 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
     run = commands.add_parser("run")
     run.add_argument("--model", type=Path, required=True)
     run.add_argument("--memory-limit", default="1G")
-    run.add_argument("--layer-cache", type=int, default=1)
+    run.add_argument("--layer-cache", type=int)
     run.add_argument("--kv-cache", choices=("disk",), default="disk")
     run.add_argument("--kv-cache-dir", type=Path)
     run.add_argument("--prompt")
@@ -41,7 +41,7 @@ def run_command(args: argparse.Namespace) -> int:
     except (MemoryLimitError, ManifestError) as exc:
         print(f"error: {exc}")
         return 2
-    if args.layer_cache < 1:
+    if args.layer_cache is not None and args.layer_cache < 1:
         print("error: layer cache must be at least 1")
         return 2
     if args.max_new_tokens < 0:
@@ -51,7 +51,22 @@ def run_command(args: argparse.Namespace) -> int:
     print(f"model: {args.model}")
     print(f"layers: {manifest.num_layers}")
     print(f"memory limit: {memory_limit} bytes")
+    plan = None
+    if args.layer_cache is None:
+        layer_bytes = max((path.stat().st_size for path in args.model.glob("layer_*.bin")), default=memory_limit)
+        try:
+            plan = plan_memory(memory_limit, layer_bytes)
+        except MemoryLimitError as exc:
+            print(f"error: {exc}")
+            return 2
+        args.layer_cache = plan.layer_cache
     print(f"layer cache: {args.layer_cache}")
+    if plan is not None:
+        print(f"weights budget: {plan.weights_bytes} bytes")
+        print(f"KV budget: {plan.kv_bytes} bytes")
+        print(f"context budget: {plan.context_bytes} bytes")
+        print(f"runtime reserve: {plan.reserve_bytes} bytes")
+        print(f"prefetch: {'enabled' if plan.prefetch else 'disabled'}")
     print(f"KV cache: {args.kv_cache}")
     if args.prompt is None:
         return 0
