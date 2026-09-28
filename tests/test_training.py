@@ -28,6 +28,15 @@ def test_jsonl_code_dataset_rejects_invalid_records(tmp_path: Path) -> None:
         JsonlCodeDataset(path, block_size=4)
 
 
+def test_jsonl_code_dataset_keeps_unicode_line_separators(tmp_path: Path) -> None:
+    path = tmp_path / "code.jsonl"
+    path.write_text('{"text":"first\\u2028second"}\n', encoding="utf-8")
+
+    dataset = JsonlCodeDataset(path, block_size=4)
+
+    assert len(dataset) == 3
+
+
 def test_torch_decoder_config_validates_attention_shape() -> None:
     with pytest.raises(ValueError, match="even attention heads"):
         TorchDecoderConfig(hidden_size=6, num_heads=4)

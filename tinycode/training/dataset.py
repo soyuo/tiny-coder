@@ -24,7 +24,7 @@ class JsonlCodeDataset:
 
     def _read_blocks(self) -> Iterator[tuple[list[int], list[int]]]:
         tokens: list[int] = []
-        for line_number, line in enumerate(self.path.read_text(encoding="utf-8").splitlines(), 1):
+        for line_number, line in enumerate(self.path.read_text(encoding="utf-8").split("\n"), 1):
             if not line.strip():
                 continue
             try:
