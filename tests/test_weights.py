@@ -9,6 +9,7 @@ from tinycode.runtime.kv_cache import KVCacheError, KVCacheStore
 from tinycode.runtime.manifest import ManifestError, ModelManifest
 from tinycode.runtime.memory import parse_memory_limit
 from tinycode.runtime.tensor_format import TensorFormatError, pack_header, read_header
+from tinycode.runtime.ops import matmul
 from tinycode.runtime.weights import WeightStore, WeightStoreError
 
 
@@ -154,3 +155,17 @@ def test_repository_context_returns_relevant_files_with_limits(tmp_path: Path) -
 def test_memory_limit_parser() -> None:
     assert parse_memory_limit("512M") == 512 * 1024**2
     assert parse_memory_limit("1G") == 1024**3
+
+
+def test_cpu_tensor_layer_execution(tmp_path: Path) -> None:
+    payload = b"\x00\x00\x80?\x00\x00\x00@\x00\x00@@\x00\x00\x80@"
+    write_layer(tmp_path, 0, pack_header("float32", (2, 2)) + payload)
+
+    with InferenceRuntime(tmp_path) as runtime:
+        result = runtime.run_tensor_layers(
+            [[1.0, 2.0]],
+            [0],
+            lambda state, weights: matmul(state, weights),
+        )
+
+    assert result.tolist() == [[7.0, 10.0]]

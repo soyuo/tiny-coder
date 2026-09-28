@@ -27,3 +27,4 @@ layer needed for the current computation.
 - disk-backed KV cache: complete — hot entries are bounded and older entries remain on disk.
 - repository context search: complete — only ranked, limited files enter context.
 - CLI configuration: complete — `run` validates model, memory, layer-cache, and KV-cache settings.
+- CPU inference core: in progress — mapped tensors can be passed to CPU executors.

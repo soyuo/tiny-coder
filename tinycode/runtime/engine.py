@@ -31,6 +31,17 @@ class InferenceRuntime:
             self.weights.unload_layer(index)
         return state
 
+    def run_tensor_layers(self, hidden_state: object, layer_indices: Iterable[int], execute_layer: LayerExecutor) -> object:
+        """Run layers after decoding each mapped payload as a CPU tensor."""
+        state = hidden_state
+        for index in layer_indices:
+            layer = self.weights.load_tensor_layer(index)
+            try:
+                state = execute_layer(state, layer.tensor_view().to_numpy())
+            finally:
+                self.weights.unload_layer(index)
+        return state
+
     def close(self) -> None:
         self.weights.close()
 
