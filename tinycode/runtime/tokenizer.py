@@ -12,6 +12,10 @@ class ByteTokenizer:
 
     vocab_size = 256
 
+    def validate_vocab_size(self, vocab_size: int) -> None:
+        if vocab_size != self.vocab_size:
+            raise TokenizationError(f"byte tokenizer requires vocab size {self.vocab_size}")
+
     def encode(self, text: str) -> list[int]:
         """Convert text to byte IDs."""
         if not isinstance(text, str):

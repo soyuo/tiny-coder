@@ -15,8 +15,8 @@ class TensorView:
     header: TensorHeader
     buffer: Any
 
-    def to_numpy(self, copy: bool = True) -> Any:
-        """Return a NumPy array, copying unless zero-copy is requested."""
+    def to_numpy(self) -> Any:
+        """Return a safe NumPy copy of the mapped payload."""
         try:
             import numpy as np
         except ImportError as exc:
@@ -28,4 +28,4 @@ class TensorView:
             count=self.header.data_size // dtype.itemsize,
             offset=self.header.data_offset,
         ).reshape(self.header.shape)
-        return values.copy() if copy else values
+        return values.copy()

@@ -9,6 +9,8 @@ def generate_greedy(model: Any, token_ids: list[int], max_new_tokens: int, eos_t
     """Append the highest-logit token at each step."""
     if max_new_tokens < 0:
         raise ValueError("max_new_tokens must be non-negative")
+    if not token_ids:
+        raise ValueError("token_ids must not be empty")
     try:
         import numpy as np
     except ImportError as exc:
@@ -23,3 +25,10 @@ def generate_greedy(model: Any, token_ids: list[int], max_new_tokens: int, eos_t
         if eos_token_id is not None and next_token == eos_token_id:
             break
     return generated
+
+
+def generate_text(model: Any, tokenizer: Any, prompt: str, max_new_tokens: int, eos_token_id: int | None = None) -> str:
+    """Generate text after validating tokenizer vocabulary compatibility."""
+    tokenizer.validate_vocab_size(model.config.vocab_size)
+    token_ids = tokenizer.encode(prompt)
+    return tokenizer.decode(generate_greedy(model, token_ids, max_new_tokens, eos_token_id))

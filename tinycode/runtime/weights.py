@@ -9,6 +9,7 @@ import mmap
 from pathlib import Path
 from threading import RLock
 from typing import Iterator
+from contextlib import contextmanager
 
 from .manifest import ModelManifest
 from .packed_format import PackedLayer, read_packed_layer
@@ -94,6 +95,7 @@ class WeightStore:
         self.manifest = manifest
         self._cache: OrderedDict[int, LayerHandle] = OrderedDict()
         self._lock = RLock()
+        self._pinned: set[int] = set()
         self._prefetcher = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tinycode-prefetch")
 
     def layer_path(self, index: int) -> Path:
@@ -139,6 +141,30 @@ class WeightStore:
             handle = self._cache.pop(index, None)
             if handle is not None:
                 handle.close()
+
+    @contextmanager
+    def hold_layer(self, index: int) -> Iterator[LayerHandle]:
+        """Keep a layer out of eviction while it is in use."""
+        with self._lock:
+            layer = self.load_layer(index)
+            self._pinned.add(index)
+        try:
+            yield layer
+        finally:
+            with self._lock:
+                self._pinned.discard(index)
+
+    @contextmanager
+    def hold_tensor_layer(self, index: int) -> Iterator[LayerHandle]:
+        with self.hold_layer(index) as layer:
+            layer.tensor_header()
+            yield layer
+
+    @contextmanager
+    def hold_packed_layer(self, index: int) -> Iterator[LayerHandle]:
+        with self.hold_layer(index) as layer:
+            layer.packed_layer()
+            yield layer
 
     def load_tensor_layer(self, index: int) -> LayerHandle:
         """Map a layer and validate its tensor header."""
@@ -188,6 +214,9 @@ class WeightStore:
 
     def _evict_excess(self) -> None:
         while len(self._cache) > self.cache_size:
-            oldest_index, oldest = self._cache.popitem(last=False)
-            del oldest_index
+            candidate = next(((index, handle) for index, handle in self._cache.items() if index not in self._pinned), None)
+            if candidate is None:
+                return
+            oldest_index, oldest = candidate
+            del self._cache[oldest_index]
             oldest.close()

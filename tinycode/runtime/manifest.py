@@ -21,6 +21,7 @@ class ModelManifest:
     hidden_size: int | None = None
     intermediate_size: int | None = None
     num_heads: int | None = None
+    rope_theta: float = 10000.0
 
     @classmethod
     def load(cls, model_dir: str | Path) -> "ModelManifest":
@@ -44,4 +45,7 @@ class ModelManifest:
         for name, value in config.items():
             if value is not None and (not isinstance(value, int) or value < 1):
                 raise ManifestError(f"{name} must be a positive integer")
-        return cls(num_layers=num_layers, layer_digits=layer_digits, **config)
+        rope_theta = data.get("rope_theta", 10000.0)
+        if not isinstance(rope_theta, (int, float)) or rope_theta <= 0:
+            raise ManifestError("rope_theta must be positive")
+        return cls(num_layers=num_layers, layer_digits=layer_digits, rope_theta=float(rope_theta), **config)

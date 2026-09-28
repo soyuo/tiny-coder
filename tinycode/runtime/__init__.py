@@ -10,7 +10,7 @@ from .tokenizer import ByteTokenizer, TokenizationError
 from .attention import scaled_dot_product_attention
 from .model import DecoderBlock, DecoderConfig, DecoderOnlyTransformer, DiskDecoderOnlyTransformer, RMSNorm
 from .packed_format import PackedLayer, PackedTensor, pack_tensors, read_packed_layer
-from .generation import generate_greedy
+from .generation import generate_greedy, generate_text
 from .weights import LayerHandle, WeightStore
 
 __all__ = [
@@ -39,6 +39,7 @@ __all__ = [
     "pack_tensors",
     "read_packed_layer",
     "generate_greedy",
+    "generate_text",
     "WeightStore",
     "pack_header",
     "parse_memory_limit",

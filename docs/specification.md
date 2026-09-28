@@ -34,3 +34,6 @@ layer needed for the current computation.
 - packed layer format: in progress — one `layer_XX.bin` can contain named tensor payloads.
 - disk decoder loading: in progress — decoder layers are materialized from packed files on demand.
 - greedy generation: in progress — deterministic next-token generation is available.
+- rotary position encoding: complete — decoder attention applies RoPE positions.
+- packed decoder shape checks: complete — projection and norm shapes are checked against the manifest.
+- KV-aware generation: pending — greedy generation currently recomputes the full prefix.

@@ -14,7 +14,7 @@ from tinycode.runtime.tokenizer import ByteTokenizer, TokenizationError
 from tinycode.runtime.attention import scaled_dot_product_attention
 from tinycode.runtime.model import DecoderBlock, DecoderConfig, DecoderOnlyTransformer, DiskDecoderOnlyTransformer
 from tinycode.runtime.packed_format import pack_tensors
-from tinycode.runtime.generation import generate_greedy
+from tinycode.runtime.generation import generate_greedy, generate_text
 from tinycode.runtime.weights import WeightStore, WeightStoreError
 
 
@@ -272,3 +272,10 @@ def test_greedy_generation_stops_at_eos() -> None:
 
     assert generate_greedy(FakeModel(), [0], max_new_tokens=3) == [0, 1, 1, 1]
     assert generate_greedy(FakeModel(), [0], max_new_tokens=3, eos_token_id=1) == [0, 1]
+
+
+def test_byte_tokenizer_validates_model_vocabulary() -> None:
+    tokenizer = ByteTokenizer()
+    tokenizer.validate_vocab_size(256)
+    with pytest.raises(TokenizationError):
+        tokenizer.validate_vocab_size(128)
