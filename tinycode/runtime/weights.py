@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Iterator
 
 from .manifest import ModelManifest
+from .tensor_format import TensorHeader, TensorFormatError, read_header
 
 
 class WeightStoreError(RuntimeError):
@@ -46,6 +47,18 @@ class LayerHandle:
         if end < start or end > self.size:
             raise ValueError("requested range is outside the layer")
         return self.mapping[start:end]
+
+    def tensor_header(self) -> TensorHeader:
+        """Read and validate the layer tensor header."""
+        position = self.mapping.tell()
+        self.mapping.seek(0)
+        try:
+            header = read_header(self.mapping)
+        finally:
+            self.mapping.seek(position)
+        if header.data_offset + header.data_size > self.size:
+            raise TensorFormatError("tensor payload is truncated")
+        return header
 
 
 class WeightStore:
@@ -105,6 +118,16 @@ class WeightStore:
         handle = self._cache.pop(index, None)
         if handle is not None:
             handle.close()
+
+    def load_tensor_layer(self, index: int) -> LayerHandle:
+        """Map a layer and validate its tensor header."""
+        layer = self.load_layer(index)
+        try:
+            layer.tensor_header()
+        except Exception:
+            self.unload_layer(index)
+            raise
+        return layer
 
     def prefetch_layer(self, index: int) -> None:
         """Load a layer into the cache."""

@@ -89,3 +89,20 @@ def test_tensor_header_round_trip() -> None:
 def test_tensor_header_rejects_bad_magic() -> None:
     with pytest.raises(TensorFormatError, match="unsupported tensor format"):
         read_header(io.BytesIO(b"BAD!\x01\x01\x01\x00"))
+
+
+def test_weight_store_validates_mapped_tensor_layer(tmp_path: Path) -> None:
+    payload = b"\x00" * 12
+    write_layer(tmp_path, 0, pack_header("float16", (2, 3)) + payload)
+
+    with WeightStore(tmp_path) as store:
+        layer = store.load_tensor_layer(0)
+        assert layer.tensor_header().data_size == len(payload)
+
+
+def test_weight_store_rejects_truncated_tensor_layer(tmp_path: Path) -> None:
+    write_layer(tmp_path, 0, pack_header("float32", (2, 2)) + b"\x00")
+
+    with WeightStore(tmp_path) as store:
+        with pytest.raises(TensorFormatError, match="truncated"):
+            store.load_tensor_layer(0)
