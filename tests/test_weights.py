@@ -13,6 +13,7 @@ from tinycode.runtime.ops import matmul
 from tinycode.runtime.tokenizer import ByteTokenizer, TokenizationError
 from tinycode.runtime.attention import scaled_dot_product_attention
 from tinycode.runtime.model import DecoderBlock, DecoderConfig, DecoderOnlyTransformer
+from tinycode.runtime.packed_format import pack_tensors
 from tinycode.runtime.weights import WeightStore, WeightStoreError
 
 
@@ -221,3 +222,16 @@ def test_decoder_only_transformer_returns_next_token_logits() -> None:
 
     assert logits.shape == (3, 8)
     assert np.isfinite(logits).all()
+
+
+def test_packed_layer_reads_named_tensors(tmp_path: Path) -> None:
+    packed = pack_tensors([
+        ("q_proj", "float32", (1, 2), b"\x00\x00\x80?\x00\x00\x00@"),
+        ("bias", "float32", (2,), b"\x00\x00@@\x00\x00\x80@"),
+    ])
+    write_layer(tmp_path, 0, packed)
+
+    with WeightStore(tmp_path) as store:
+        layer = store.load_packed_layer(0)
+        assert layer.packed_layer().tensors["q_proj"].shape == (1, 2)
+        assert layer.packed_layer().tensor_view("bias").to_numpy().tolist() == [3.0, 4.0]

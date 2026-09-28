@@ -11,6 +11,7 @@ from threading import RLock
 from typing import Iterator
 
 from .manifest import ModelManifest
+from .packed_format import PackedLayer, read_packed_layer
 from .tensor import TensorView
 from .tensor_format import TensorHeader, TensorFormatError, read_header
 
@@ -66,6 +67,15 @@ class LayerHandle:
     def tensor_view(self) -> TensorView:
         """Return a CPU tensor view over the mapped payload."""
         return TensorView(self.tensor_header(), self.mapping)
+
+    def packed_layer(self) -> PackedLayer:
+        """Read the packed tensor index from the mapped layer."""
+        position = self.mapping.tell()
+        self.mapping.seek(0)
+        try:
+            return read_packed_layer(self.mapping)
+        finally:
+            self.mapping.seek(position)
 
 
 class WeightStore:
@@ -135,6 +145,16 @@ class WeightStore:
         layer = self.load_layer(index)
         try:
             layer.tensor_header()
+        except Exception:
+            self.unload_layer(index)
+            raise
+        return layer
+
+    def load_packed_layer(self, index: int) -> LayerHandle:
+        """Map and validate a packed layer."""
+        layer = self.load_layer(index)
+        try:
+            layer.packed_layer()
         except Exception:
             self.unload_layer(index)
             raise

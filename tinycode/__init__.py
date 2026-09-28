@@ -9,6 +9,7 @@ from .runtime.ops import matmul
 from .runtime.tokenizer import ByteTokenizer, TokenizationError
 from .runtime.attention import scaled_dot_product_attention
 from .runtime.model import DecoderBlock, DecoderConfig, DecoderOnlyTransformer, RMSNorm
+from .runtime.packed_format import PackedLayer, PackedTensor, pack_tensors, read_packed_layer
 from .runtime.weights import LayerHandle, WeightStore
 
 __all__ = [
@@ -31,6 +32,10 @@ __all__ = [
     "DecoderConfig",
     "DecoderOnlyTransformer",
     "RMSNorm",
+    "PackedLayer",
+    "PackedTensor",
+    "pack_tensors",
+    "read_packed_layer",
     "WeightStore",
     "pack_header",
     "parse_memory_limit",
