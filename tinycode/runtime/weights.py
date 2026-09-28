@@ -32,7 +32,7 @@ class LayerHandle:
     _file: object
     leases: int = 0
 
-    def close(self) -> None:
+    def _close_mapping(self) -> None:
         self.mapping.close()
         self._file.close()
 
@@ -143,7 +143,7 @@ class WeightStore:
                 if handle.leases > 0:
                     return
             self._cache.pop(index, None)
-            handle.close()
+            handle._close_mapping()
 
     @contextmanager
     def hold_layer(self, index: int) -> Iterator[LayerHandle]:
@@ -205,11 +205,13 @@ class WeightStore:
     def close(self) -> None:
         self._prefetcher.shutdown(wait=True, cancel_futures=True)
         with self._lock:
+            if any(handle.leases > 0 for handle in self._cache.values()):
+                raise RuntimeError("cannot close weight store while layers are leased")
             handles = list(self._cache.values())
             self._cache.clear()
             self._pinned.clear()
         for handle in handles:
-            handle.close()
+            handle._close_mapping()
 
     def __enter__(self) -> "WeightStore":
         return self
@@ -231,4 +233,4 @@ class WeightStore:
                 return
             oldest_index, oldest = candidate
             del self._cache[oldest_index]
-            oldest.close()
+            oldest._close_mapping()
