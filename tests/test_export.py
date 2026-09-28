@@ -26,6 +26,25 @@ def test_export_checkpoint_creates_runtime_model(tmp_path: Path) -> None:
     assert logits.shape == (2, 256)
 
 
+def test_exported_runtime_matches_pytorch_logits(tmp_path: Path) -> None:
+    import numpy as np
+
+    config = TorchDecoderConfig(hidden_size=16, intermediate_size=32, num_layers=1, num_heads=2, max_sequence_length=8)
+    model = TinyCodeDecoder(config)
+    model.eval()
+    checkpoint = tmp_path / "checkpoint.pt"
+    torch.save({"model": model.state_dict(), "config": config.to_dict()}, checkpoint)
+    output = export_checkpoint(checkpoint, tmp_path / "model")
+    token_ids = torch.tensor([1, 2, 3], dtype=torch.long)
+
+    with torch.no_grad():
+        expected = model(token_ids.unsqueeze(0))[0].numpy()
+    with DiskDecoderOnlyTransformer.from_model_dir(output) as runtime:
+        actual = runtime(np.array([1, 2, 3], dtype=np.int64))
+
+    np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-5)
+
+
 def test_export_checkpoint_rejects_missing_tensor(tmp_path: Path) -> None:
     config = TorchDecoderConfig(hidden_size=16, intermediate_size=32, num_layers=1, num_heads=2, max_sequence_length=8)
     model = TinyCodeDecoder(config)
