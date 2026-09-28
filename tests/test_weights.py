@@ -14,7 +14,7 @@ from tinycode.runtime.tokenizer import ByteTokenizer, TokenizationError
 from tinycode.runtime.attention import scaled_dot_product_attention
 from tinycode.runtime.model import DecoderBlock, DecoderConfig, DecoderOnlyTransformer, DiskDecoderOnlyTransformer
 from tinycode.runtime.packed_format import pack_tensors
-from tinycode.runtime.generation import generate_greedy, generate_text
+from tinycode.runtime.generation import generate_greedy, generate_greedy_cached, generate_text
 from tinycode.runtime.weights import WeightStore, WeightStoreError
 
 
@@ -273,6 +273,56 @@ def test_greedy_generation_stops_at_eos() -> None:
 
     assert generate_greedy(FakeModel(), [0], max_new_tokens=3) == [0, 1, 1, 1]
     assert generate_greedy(FakeModel(), [0], max_new_tokens=3, eos_token_id=1) == [0, 1]
+
+
+def test_cached_generation_reuses_decoder_states() -> None:
+    import numpy as np
+
+    config = DecoderConfig(vocab_size=8, hidden_size=4, intermediate_size=6, num_layers=1, num_heads=2)
+    weights = {
+        "q_proj": np.eye(4, dtype=np.float32), "k_proj": np.eye(4, dtype=np.float32),
+        "v_proj": np.eye(4, dtype=np.float32), "o_proj": np.eye(4, dtype=np.float32),
+        "gate_proj": np.ones((6, 4), dtype=np.float32), "up_proj": np.ones((6, 4), dtype=np.float32),
+        "down_proj": np.ones((4, 6), dtype=np.float32), "input_norm": np.ones(4, dtype=np.float32),
+        "post_norm": np.ones(4, dtype=np.float32),
+    }
+    model = DecoderOnlyTransformer(
+        config, np.ones((8, 4), dtype=np.float32), [DecoderBlock(config, weights)],
+        np.ones(4, dtype=np.float32), np.ones((8, 4), dtype=np.float32),
+    )
+
+    result = generate_greedy_cached(model, [1, 2], max_new_tokens=2)
+
+    assert result == [1, 2, 0, 0]
+
+
+def test_cached_logits_match_full_prefix_logits() -> None:
+    import numpy as np
+
+    rng = np.random.default_rng(7)
+    config = DecoderConfig(vocab_size=8, hidden_size=4, intermediate_size=6, num_layers=1, num_heads=2)
+    weights = {
+        name: rng.normal(size=shape).astype(np.float32)
+        for name, shape in {
+            "q_proj": (4, 4), "k_proj": (4, 4), "v_proj": (4, 4), "o_proj": (4, 4),
+            "gate_proj": (6, 4), "up_proj": (6, 4), "down_proj": (4, 6),
+            "input_norm": (4,), "post_norm": (4,),
+        }.items()
+    }
+    model = DecoderOnlyTransformer(
+        config, rng.normal(size=(8, 4)).astype(np.float32), [DecoderBlock(config, weights)],
+        rng.normal(size=4).astype(np.float32), rng.normal(size=(8, 4)).astype(np.float32),
+    )
+    prompt = np.array([1, 2, 3], dtype=np.int64)
+    cache = model.new_cache()
+
+    cached_prompt = model.forward_cached(prompt, cache)
+    full_prompt = model(prompt)
+    cached_next = model.forward_cached(np.array([4], dtype=np.int64), cache)
+    full_next = model(np.array([1, 2, 3, 4], dtype=np.int64))
+
+    np.testing.assert_allclose(cached_prompt, full_prompt, rtol=1e-5, atol=1e-5)
+    np.testing.assert_allclose(cached_next, full_next[-1:], rtol=1e-5, atol=1e-5)
 
 
 def test_byte_tokenizer_validates_model_vocabulary() -> None:

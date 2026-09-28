@@ -8,9 +8,9 @@ from .tensor import TensorView
 from .ops import matmul
 from .tokenizer import ByteTokenizer, TokenizationError
 from .attention import scaled_dot_product_attention
-from .model import DecoderBlock, DecoderConfig, DecoderOnlyTransformer, DiskDecoderOnlyTransformer, RMSNorm
+from .model import DecoderBlock, DecoderConfig, DecoderKVCache, DecoderOnlyTransformer, DiskDecoderOnlyTransformer, RMSNorm
 from .packed_format import PackedLayer, PackedTensor, pack_tensors, read_packed_layer
-from .generation import generate_greedy, generate_text
+from .generation import generate_greedy, generate_greedy_cached, generate_text
 from .weights import LayerHandle, LayerLease, WeightStore
 
 __all__ = [
@@ -32,6 +32,7 @@ __all__ = [
     "scaled_dot_product_attention",
     "DecoderBlock",
     "DecoderConfig",
+    "DecoderKVCache",
     "DecoderOnlyTransformer",
     "DiskDecoderOnlyTransformer",
     "RMSNorm",
@@ -40,6 +41,7 @@ __all__ = [
     "pack_tensors",
     "read_packed_layer",
     "generate_greedy",
+    "generate_greedy_cached",
     "generate_text",
     "WeightStore",
     "pack_header",
