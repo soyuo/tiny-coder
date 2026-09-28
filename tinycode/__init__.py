@@ -11,7 +11,7 @@ from .runtime.attention import scaled_dot_product_attention
 from .runtime.model import DecoderBlock, DecoderConfig, DecoderOnlyTransformer, DiskDecoderOnlyTransformer, RMSNorm
 from .runtime.packed_format import PackedLayer, PackedTensor, pack_tensors, read_packed_layer
 from .runtime.generation import generate_greedy, generate_text
-from .runtime.weights import LayerHandle, WeightStore
+from .runtime.weights import LayerHandle, LayerLease, WeightStore
 
 __all__ = [
     "InferenceRuntime",
@@ -20,6 +20,7 @@ __all__ = [
     "KVCacheStore",
     "RepositoryContext",
     "LayerHandle",
+    "LayerLease",
     "ManifestError",
     "MemoryLimitError",
     "ModelManifest",

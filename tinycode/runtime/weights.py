@@ -74,6 +74,29 @@ class LayerHandle:
             self.mapping.seek(position)
 
 
+class LayerLease:
+    """Owned access to a layer handle."""
+
+    def __init__(self, store: "WeightStore", index: int, handle: LayerHandle) -> None:
+        self._store = store
+        self._index = index
+        self.handle = handle
+        self._released = False
+
+    def __enter__(self) -> LayerHandle:
+        return self.handle
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if not self._released:
+            self._released = True
+            self._store.unload_layer(self._index)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.handle, name)
+
 class WeightStore:
     """Read layers from disk with a bounded LRU cache."""
 
@@ -174,7 +197,7 @@ class WeightStore:
             layer.packed_layer()
             yield layer
 
-    def load_tensor_layer(self, index: int) -> LayerHandle:
+    def load_tensor_layer(self, index: int) -> LayerLease:
         """Map a layer and validate its tensor header."""
         layer = self.load_layer(index)
         try:
@@ -182,9 +205,9 @@ class WeightStore:
         except Exception:
             self.unload_layer(index)
             raise
-        return layer
+        return LayerLease(self, index, layer)
 
-    def load_packed_layer(self, index: int) -> LayerHandle:
+    def load_packed_layer(self, index: int) -> LayerLease:
         """Map and validate a packed layer."""
         layer = self.load_layer(index)
         try:
@@ -192,7 +215,7 @@ class WeightStore:
         except Exception:
             self.unload_layer(index)
             raise
-        return layer
+        return LayerLease(self, index, layer)
 
     def prefetch_layer(self, index: int) -> None:
         """Load a layer into the cache."""
@@ -203,10 +226,11 @@ class WeightStore:
         return self._prefetcher.submit(self.prefetch_layer, index)
 
     def close(self) -> None:
-        self._prefetcher.shutdown(wait=True, cancel_futures=True)
         with self._lock:
             if any(handle.leases > 0 for handle in self._cache.values()):
                 raise RuntimeError("cannot close weight store while layers are leased")
+        self._prefetcher.shutdown(wait=True, cancel_futures=True)
+        with self._lock:
             handles = list(self._cache.values())
             self._cache.clear()
             self._pinned.clear()

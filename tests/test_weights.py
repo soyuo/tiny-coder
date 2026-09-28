@@ -105,8 +105,8 @@ def test_weight_store_validates_mapped_tensor_layer(tmp_path: Path) -> None:
     write_layer(tmp_path, 0, pack_header("float16", (2, 3)) + payload)
 
     with WeightStore(tmp_path) as store:
-        layer = store.load_tensor_layer(0)
-        assert layer.tensor_header().data_size == len(payload)
+        with store.load_tensor_layer(0) as layer:
+            assert layer.tensor_header().data_size == len(payload)
 
 
 def test_weight_store_rejects_truncated_tensor_layer(tmp_path: Path) -> None:
@@ -234,9 +234,9 @@ def test_packed_layer_reads_named_tensors(tmp_path: Path) -> None:
     write_layer(tmp_path, 0, packed)
 
     with WeightStore(tmp_path) as store:
-        layer = store.load_packed_layer(0)
-        assert layer.packed_layer().tensors["q_proj"].shape == (1, 2)
-        assert layer.packed_layer().tensor_view("bias").to_numpy().tolist() == [3.0, 4.0]
+        with store.load_packed_layer(0) as layer:
+            assert layer.packed_layer().tensors["q_proj"].shape == (1, 2)
+            assert layer.packed_layer().tensor_view("bias").to_numpy().tolist() == [3.0, 4.0]
 
 
 def test_disk_decoder_loads_one_packed_layer_at_a_time(tmp_path: Path) -> None:
