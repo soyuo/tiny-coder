@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from tinycode.runtime.engine import InferenceRuntime
+from tinycode.runtime.manifest import ManifestError, ModelManifest
 from tinycode.runtime.weights import WeightStore, WeightStoreError
 
 
@@ -52,3 +53,22 @@ def test_runtime_processes_layers_in_order_and_releases_each(tmp_path: Path) -> 
         assert result == "AB"
         assert seen == [b"A", b"B"]
         assert runtime.weights.cached_layers() == ()
+
+
+def test_manifest_controls_layer_count_and_filename_width(tmp_path: Path) -> None:
+    (tmp_path / "model.json").write_text(
+        '{"num_layers": 3, "layer_digits": 3}', encoding="utf-8"
+    )
+    manifest = ModelManifest.load(tmp_path)
+    write_layer(tmp_path, 2, b"two")
+
+    with WeightStore(tmp_path, manifest=manifest) as store:
+        assert store.layer_count() == 3
+        assert store.layer_path(2).name == "layer_002.bin"
+
+
+def test_manifest_rejects_invalid_layer_count(tmp_path: Path) -> None:
+    (tmp_path / "model.json").write_text('{"num_layers": 0}', encoding="utf-8")
+
+    with pytest.raises(ManifestError, match="positive integer"):
+        ModelManifest.load(tmp_path)

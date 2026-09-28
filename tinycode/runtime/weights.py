@@ -8,6 +8,8 @@ import mmap
 from pathlib import Path
 from typing import Iterator
 
+from .manifest import ModelManifest
+
 
 class WeightStoreError(RuntimeError):
     """Raised when the on-disk model layout cannot be used."""
@@ -49,17 +51,28 @@ class LayerHandle:
 class WeightStore:
     """Read layers from disk with a bounded LRU cache."""
 
-    def __init__(self, model_dir: str | Path, cache_size: int = 1) -> None:
+    def __init__(
+        self,
+        model_dir: str | Path,
+        cache_size: int = 1,
+        manifest: ModelManifest | None = None,
+    ) -> None:
         if cache_size < 1:
             raise ValueError("cache_size must be at least 1")
         self.model_dir = Path(model_dir)
         self.cache_size = cache_size
+        self.manifest = manifest
         self._cache: OrderedDict[int, LayerHandle] = OrderedDict()
 
     def layer_path(self, index: int) -> Path:
         if index < 0:
             raise ValueError("layer index must be non-negative")
-        return self.model_dir / f"layer_{index:02d}.bin"
+        digits = self.manifest.layer_digits if self.manifest else 2
+        return self.model_dir / f"layer_{index:0{digits}d}.bin"
+
+    def layer_count(self) -> int | None:
+        """Return the manifest layer count, if loaded."""
+        return self.manifest.num_layers if self.manifest else None
 
     def load_layer(self, index: int) -> LayerHandle:
         """Map a layer and return its handle."""

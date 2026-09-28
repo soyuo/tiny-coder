@@ -20,7 +20,8 @@ layer needed for the current computation.
 
 - `disk-backed-runtime`: complete — opaque layer mmap, bounded LRU cache,
   explicit unload, and a CPU-only layer lifecycle boundary.
-- tensor/model format: pending
+- model manifest: complete — `model.json` provides layer count and filename width.
+- tensor format: pending
 - asynchronous prefetch worker: pending
 - KV cache storage: pending
 - repository context retrieval: pending
