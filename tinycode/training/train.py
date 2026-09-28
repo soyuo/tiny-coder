@@ -20,6 +20,11 @@ class TrainConfig:
     device: str = "cpu"
 
 
+def _collate_blocks(batch: list[tuple[list[int], list[int]]], torch: Any) -> tuple[Any, Any]:
+    inputs, targets = zip(*batch)
+    return torch.tensor(list(inputs), dtype=torch.long), torch.tensor(list(targets), dtype=torch.long)
+
+
 def train_jsonl(path: str | Path, output_dir: str | Path, config: TrainConfig | None = None) -> dict[str, Any]:
     torch, _ = _torch()
     config = config or TrainConfig()
@@ -29,7 +34,12 @@ def train_jsonl(path: str | Path, output_dir: str | Path, config: TrainConfig | 
     model = TinyCodeDecoder(config.model).to(config.device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
     loss_fn = torch.nn.CrossEntropyLoss()
-    loader = torch.utils.data.DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
+    loader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=config.batch_size,
+        shuffle=True,
+        collate_fn=lambda batch: _collate_blocks(batch, torch),
+    )
     model.train()
     losses: list[float] = []
     for _ in range(config.epochs):

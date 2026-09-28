@@ -4,6 +4,7 @@ import pytest
 
 from tinycode.training.dataset import JsonlCodeDataset
 from tinycode.training.model import TorchDecoderConfig
+from tinycode.training.train import _collate_blocks
 
 
 def test_jsonl_code_dataset_builds_shifted_blocks(tmp_path: Path) -> None:
@@ -29,3 +30,17 @@ def test_jsonl_code_dataset_rejects_invalid_records(tmp_path: Path) -> None:
 def test_torch_decoder_config_validates_attention_shape() -> None:
     with pytest.raises(ValueError, match="even attention heads"):
         TorchDecoderConfig(hidden_size=6, num_heads=4)
+
+
+def test_training_collate_builds_batch_tensor() -> None:
+    class FakeTorch:
+        long = "long"
+
+        @staticmethod
+        def tensor(values, dtype=None):
+            return values, dtype
+
+    inputs, targets = _collate_blocks([([1, 2], [2, 3]), ([4, 5], [5, 6])], FakeTorch())
+
+    assert inputs == ([[1, 2], [4, 5]], "long")
+    assert targets == ([[2, 3], [5, 6]], "long")
