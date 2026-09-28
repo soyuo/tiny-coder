@@ -8,7 +8,7 @@ from .tensor import TensorView
 from .ops import matmul
 from .tokenizer import ByteTokenizer, TokenizationError
 from .attention import scaled_dot_product_attention
-from .model import DecoderBlock, DecoderConfig, DecoderOnlyTransformer, RMSNorm
+from .model import DecoderBlock, DecoderConfig, DecoderOnlyTransformer, DiskDecoderOnlyTransformer, RMSNorm
 from .packed_format import PackedLayer, PackedTensor, pack_tensors, read_packed_layer
 from .weights import LayerHandle, WeightStore
 
@@ -31,6 +31,7 @@ __all__ = [
     "DecoderBlock",
     "DecoderConfig",
     "DecoderOnlyTransformer",
+    "DiskDecoderOnlyTransformer",
     "RMSNorm",
     "PackedLayer",
     "PackedTensor",

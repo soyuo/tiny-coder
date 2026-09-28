@@ -12,7 +12,7 @@ from tinycode.runtime.tensor_format import TensorFormatError, pack_header, read_
 from tinycode.runtime.ops import matmul
 from tinycode.runtime.tokenizer import ByteTokenizer, TokenizationError
 from tinycode.runtime.attention import scaled_dot_product_attention
-from tinycode.runtime.model import DecoderBlock, DecoderConfig, DecoderOnlyTransformer
+from tinycode.runtime.model import DecoderBlock, DecoderConfig, DecoderOnlyTransformer, DiskDecoderOnlyTransformer
 from tinycode.runtime.packed_format import pack_tensors
 from tinycode.runtime.weights import WeightStore, WeightStoreError
 
@@ -235,3 +235,28 @@ def test_packed_layer_reads_named_tensors(tmp_path: Path) -> None:
         layer = store.load_packed_layer(0)
         assert layer.packed_layer().tensors["q_proj"].shape == (1, 2)
         assert layer.packed_layer().tensor_view("bias").to_numpy().tolist() == [3.0, 4.0]
+
+
+def test_disk_decoder_loads_one_packed_layer_at_a_time(tmp_path: Path) -> None:
+    import json
+    import numpy as np
+
+    config = {"num_layers": 1, "vocab_size": 8, "hidden_size": 4, "intermediate_size": 6, "num_heads": 2}
+    (tmp_path / "model.json").write_text(json.dumps(config), encoding="utf-8")
+    for name, array in {
+        "embedding.bin": np.ones((8, 4), dtype=np.float32),
+        "norm.bin": np.ones(4, dtype=np.float32),
+        "lm_head.bin": np.ones((8, 4), dtype=np.float32),
+    }.items():
+        (tmp_path / name).write_bytes(pack_header("float32", array.shape) + array.tobytes())
+    arrays = {
+        "q_proj": np.eye(4, dtype=np.float32), "k_proj": np.eye(4, dtype=np.float32), "v_proj": np.eye(4, dtype=np.float32), "o_proj": np.eye(4, dtype=np.float32),
+        "gate_proj": np.ones((6, 4), dtype=np.float32), "up_proj": np.ones((6, 4), dtype=np.float32), "down_proj": np.ones((4, 6), dtype=np.float32),
+        "input_norm": np.ones(4, dtype=np.float32), "post_norm": np.ones(4, dtype=np.float32),
+    }
+    (tmp_path / "layer_00.bin").write_bytes(pack_tensors([(name, "float32", array.shape, array.tobytes()) for name, array in arrays.items()]))
+
+    with DiskDecoderOnlyTransformer.from_model_dir(tmp_path) as model:
+        logits = model(np.array([1, 2]))
+
+    assert logits.shape == (2, 8)

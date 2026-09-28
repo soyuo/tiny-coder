@@ -32,3 +32,4 @@ layer needed for the current computation.
 - attention core: in progress — CPU scaled dot-product attention is available for 2D sequences.
 - decoder-only block: in progress — multi-head causal attention, RMSNorm, SwiGLU, and residual paths are connected.
 - packed layer format: in progress — one `layer_XX.bin` can contain named tensor payloads.
+- disk decoder loading: in progress — decoder layers are materialized from packed files on demand.

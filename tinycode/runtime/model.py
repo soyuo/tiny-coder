@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import mmap
+from pathlib import Path
 from typing import Any
 
+from .manifest import ModelManifest
+from .packed_format import PackedLayer
+from .tensor_format import read_header
+from .weights import WeightStore
 
 def _numpy() -> Any:
     try:
@@ -102,3 +108,67 @@ class DecoderOnlyTransformer:
         for block in self.blocks:
             hidden = block(hidden)
         return self.final_norm(hidden) @ self.lm_head.T
+
+
+class DiskDecoderOnlyTransformer:
+    """Run decoder layers by loading one packed layer at a time."""
+
+    def __init__(self, model_dir: str | Path, manifest: ModelManifest, layer_cache: int = 1) -> None:
+        required = (manifest.vocab_size, manifest.hidden_size, manifest.intermediate_size, manifest.num_heads)
+        if any(value is None for value in required):
+            raise ValueError("model manifest lacks decoder dimensions")
+        self.config = DecoderConfig(
+            manifest.vocab_size,
+            manifest.hidden_size,
+            manifest.intermediate_size,
+            manifest.num_layers,
+            manifest.num_heads,
+        )
+        self.model_dir = Path(model_dir)
+        self.weights = WeightStore(self.model_dir, cache_size=layer_cache, manifest=manifest)
+        self.embedding = _load_tensor_file(self.model_dir / "embedding.bin")
+        self.final_norm = _load_tensor_file(self.model_dir / "norm.bin")
+        self.lm_head = _load_tensor_file(self.model_dir / "lm_head.bin")
+
+    @classmethod
+    def from_model_dir(cls, model_dir: str | Path, layer_cache: int = 1) -> "DiskDecoderOnlyTransformer":
+        model_dir = Path(model_dir)
+        return cls(model_dir, ModelManifest.load(model_dir), layer_cache=layer_cache)
+
+    def __call__(self, token_ids: Any) -> Any:
+        np = _numpy()
+        token_ids = np.asarray(token_ids, dtype=np.int64)
+        if token_ids.ndim != 1 or np.any(token_ids < 0) or np.any(token_ids >= self.config.vocab_size):
+            raise ValueError("invalid token sequence")
+        hidden = self.embedding[token_ids]
+        for index in range(self.config.num_layers):
+            layer = self.weights.load_packed_layer(index)
+            try:
+                packed = layer.packed_layer()
+                block = DecoderBlock(self.config, {name: packed.tensor_view(name).to_numpy() for name in (
+                    "q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj", "input_norm", "post_norm"
+                )})
+                hidden = block(hidden)
+            finally:
+                self.weights.unload_layer(index)
+        return RMSNorm(self.final_norm)(hidden) @ self.lm_head.T
+
+    def close(self) -> None:
+        self.weights.close()
+
+    def __enter__(self) -> "DiskDecoderOnlyTransformer":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+
+def _load_tensor_file(path: Path) -> Any:
+    np = _numpy()
+    with path.open("rb") as file_handle:
+        with mmap.mmap(file_handle.fileno(), length=0, access=mmap.ACCESS_READ) as mapping:
+            header = read_header(mapping)
+            if header.data_offset + header.data_size > mapping.size():
+                raise ValueError(f"tensor payload is truncated: {path}")
+            dtype = np.dtype(header.dtype)
+            return np.frombuffer(mapping, dtype=dtype, count=header.data_size // dtype.itemsize, offset=header.data_offset).reshape(header.shape).copy()
