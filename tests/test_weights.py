@@ -4,6 +4,7 @@ import io
 import pytest
 
 from tinycode.runtime.engine import InferenceRuntime
+from tinycode.runtime.context import RepositoryContext
 from tinycode.runtime.kv_cache import KVCacheError, KVCacheStore
 from tinycode.runtime.manifest import ManifestError, ModelManifest
 from tinycode.runtime.tensor_format import TensorFormatError, pack_header, read_header
@@ -134,3 +135,16 @@ def test_kv_cache_reports_missing_entry(tmp_path: Path) -> None:
 
     with pytest.raises(KVCacheError, match="does not exist"):
         cache.get(0)
+
+
+def test_repository_context_returns_relevant_files_with_limits(tmp_path: Path) -> None:
+    (tmp_path / "auth.py").write_text("def refresh_token():\n    pass\n", encoding="utf-8")
+    (tmp_path / "unrelated.py").write_text("def render_home():\n    pass\n", encoding="utf-8")
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "auth.py").write_text("refresh_token", encoding="utf-8")
+
+    results = RepositoryContext(tmp_path, max_files=1, max_bytes=20).search("refresh token")
+
+    assert len(results) == 1
+    assert results[0].path.name == "auth.py"
+    assert len(results[0].text) == 20

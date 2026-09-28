@@ -25,6 +25,7 @@ layer needed for the current computation.
 - tensor-aware loading: complete — mapped layers can be validated before execution.
 - async prefetch: complete — a single worker can warm the next layer without blocking the caller.
 - disk-backed KV cache: complete — hot entries are bounded and older entries remain on disk.
+- repository context search: complete — only ranked, limited files enter context.
 - asynchronous prefetch worker: pending
 - KV cache storage: pending
 - repository context retrieval: pending
