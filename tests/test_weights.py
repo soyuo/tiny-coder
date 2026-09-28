@@ -330,6 +330,31 @@ def test_disk_decoder_loads_one_packed_layer_at_a_time(tmp_path: Path) -> None:
     assert logits.shape == (2, 8)
 
 
+def test_disk_decoder_cleans_up_after_tensor_load_failure(tmp_path: Path, monkeypatch) -> None:
+    import json
+    import numpy as np
+    import tinycode.runtime.model as model_module
+
+    config = {"num_layers": 1, "vocab_size": 8, "hidden_size": 4, "intermediate_size": 6, "num_heads": 2}
+    (tmp_path / "model.json").write_text(json.dumps(config), encoding="utf-8")
+    (tmp_path / "embedding.bin").write_bytes(
+        pack_header("float32", (8, 4)) + np.ones((8, 4), dtype=np.float32).tobytes()
+    )
+    original = model_module._load_tensor_file
+    calls = 0
+
+    def fail_on_second_load(path):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("cannot load norm")
+        return original(path)
+
+    monkeypatch.setattr(model_module, "_load_tensor_file", fail_on_second_load)
+    with pytest.raises(OSError, match="cannot load norm"):
+        DiskDecoderOnlyTransformer.from_model_dir(tmp_path)
+
+
 def test_disk_decoder_cached_forward_keeps_previous_kv(tmp_path: Path) -> None:
     import json
     import numpy as np

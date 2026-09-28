@@ -82,6 +82,7 @@ def run_command(args: argparse.Namespace) -> int:
             args.model,
             layer_cache=args.layer_cache,
             weight_budget=weight_budget,
+            prefetch=plan.prefetch if plan is not None else False,
         ) as model:
             tokenizer.validate_vocab_size(model.config.vocab_size)
             store = KVCacheStore(args.kv_cache_dir, hot_bytes=kv_budget)

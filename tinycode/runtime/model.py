@@ -250,6 +250,7 @@ class DiskDecoderOnlyTransformer:
         manifest: ModelManifest,
         layer_cache: int = 1,
         weight_budget: int | None = None,
+        prefetch: bool = False,
     ) -> None:
         required = (manifest.vocab_size, manifest.hidden_size, manifest.intermediate_size, manifest.num_heads)
         if any(value is None for value in required):
@@ -269,13 +270,24 @@ class DiskDecoderOnlyTransformer:
             manifest=manifest,
             byte_budget=weight_budget,
         )
+        self.prefetch = prefetch and layer_cache > 1
         self._tensor_resources = []
-        self.embedding, resource = _load_tensor_file(self.model_dir / "embedding.bin")
-        self._tensor_resources.append(resource)
-        self.final_norm, resource = _load_tensor_file(self.model_dir / "norm.bin")
-        self._tensor_resources.append(resource)
-        self.lm_head, resource = _load_tensor_file(self.model_dir / "lm_head.bin")
-        self._tensor_resources.append(resource)
+        try:
+            self.embedding, resource = _load_tensor_file(self.model_dir / "embedding.bin")
+            self._tensor_resources.append(resource)
+            self.final_norm, resource = _load_tensor_file(self.model_dir / "norm.bin")
+            self._tensor_resources.append(resource)
+            self.lm_head, resource = _load_tensor_file(self.model_dir / "lm_head.bin")
+            self._tensor_resources.append(resource)
+        except Exception:
+            self.weights.close()
+            self.embedding = None
+            self.final_norm = None
+            self.lm_head = None
+            for mapping, file_handle in self._tensor_resources:
+                mapping.close()
+                file_handle.close()
+            raise
 
     @classmethod
     def from_model_dir(
@@ -283,6 +295,7 @@ class DiskDecoderOnlyTransformer:
         model_dir: str | Path,
         layer_cache: int = 1,
         weight_budget: int | None = None,
+        prefetch: bool = False,
     ) -> "DiskDecoderOnlyTransformer":
         model_dir = Path(model_dir)
         return cls(
@@ -290,6 +303,7 @@ class DiskDecoderOnlyTransformer:
             ModelManifest.load(model_dir),
             layer_cache=layer_cache,
             weight_budget=weight_budget,
+            prefetch=prefetch,
         )
 
     def __call__(self, token_ids: Any) -> Any:
@@ -299,10 +313,15 @@ class DiskDecoderOnlyTransformer:
             raise ValueError("invalid token sequence")
         hidden = self.embedding[token_ids]
         for index in range(self.config.num_layers):
+            next_layer = None
+            if self.prefetch and index + 1 < self.config.num_layers:
+                next_layer = self.weights.prefetch_layer_async(index + 1)
             with self.weights.hold_packed_layer(index) as layer:
                 packed = layer.packed_layer()
                 block = DecoderBlock(self.config, _load_block_weights(self.config, packed))
                 hidden = block(hidden)
+            if next_layer is not None:
+                next_layer.result()
         return RMSNorm(self.final_norm)(hidden) @ self.lm_head.T
 
     def new_cache(self, disk_store: KVCacheStore | None = None) -> DecoderKVCache:
@@ -322,6 +341,9 @@ class DiskDecoderOnlyTransformer:
             raise ValueError("cached decoding accepts one token after the initial sequence")
         hidden = self.embedding[token_ids]
         for index in range(self.config.num_layers):
+            next_layer = None
+            if self.prefetch and index + 1 < self.config.num_layers:
+                next_layer = self.weights.prefetch_layer_async(index + 1)
             past_key, past_value = cache.load_layer(index)
             _validate_cached_kv(self.config, cache.sequence_length, past_key, past_value)
             with self.weights.hold_packed_layer(index) as layer:
@@ -329,6 +351,8 @@ class DiskDecoderOnlyTransformer:
                 block = DecoderBlock(self.config, _load_block_weights(self.config, packed))
                 hidden, key, value = block.forward_cached(hidden, past_key, past_value)
             cache.save_layer(index, key, value, past_key, past_value)
+            if next_layer is not None:
+                next_layer.result()
         cache.sequence_length += int(token_ids.size)
         return RMSNorm(self.final_norm)(hidden) @ self.lm_head.T
 
