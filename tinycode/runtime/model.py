@@ -147,7 +147,7 @@ class DiskDecoderOnlyTransformer:
     def __call__(self, token_ids: Any) -> Any:
         np = _numpy()
         token_ids = np.asarray(token_ids, dtype=np.int64)
-        if token_ids.ndim != 1 or np.any(token_ids < 0) or np.any(token_ids >= self.config.vocab_size):
+        if token_ids.ndim != 1 or token_ids.size == 0 or np.any(token_ids < 0) or np.any(token_ids >= self.config.vocab_size):
             raise ValueError("invalid token sequence")
         hidden = self.embedding[token_ids]
         for index in range(self.config.num_layers):
@@ -185,6 +185,8 @@ def _load_tensor_file(path: Path) -> Any:
         values = np.frombuffer(mapping, dtype=dtype, count=header.data_size // dtype.itemsize, offset=header.data_offset).reshape(header.shape)
         return values, (mapping, file_handle)
     except Exception:
+        if "mapping" in locals():
+            mapping.close()
         file_handle.close()
         raise
 

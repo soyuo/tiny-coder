@@ -95,7 +95,7 @@ class WeightStore:
         self.manifest = manifest
         self._cache: OrderedDict[int, LayerHandle] = OrderedDict()
         self._lock = RLock()
-        self._pinned: set[int] = set()
+        self._pinned: dict[int, int] = {}
         self._prefetcher = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tinycode-prefetch")
 
     def layer_path(self, index: int) -> Path:
@@ -147,12 +147,19 @@ class WeightStore:
         """Keep a layer out of eviction while it is in use."""
         with self._lock:
             layer = self.load_layer(index)
-            self._pinned.add(index)
+            self._pinned[index] = self._pinned.get(index, 0) + 1
         try:
             yield layer
         finally:
             with self._lock:
-                self._pinned.discard(index)
+                remaining = self._pinned.get(index, 1) - 1
+                if remaining > 0:
+                    self._pinned[index] = remaining
+                else:
+                    self._pinned.pop(index, None)
+                    handle = self._cache.pop(index, None)
+                    if handle is not None:
+                        handle.close()
 
     @contextmanager
     def hold_tensor_layer(self, index: int) -> Iterator[LayerHandle]:
