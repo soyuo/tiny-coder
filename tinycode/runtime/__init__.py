@@ -8,6 +8,7 @@ from .tensor import TensorView
 from .ops import matmul
 from .tokenizer import ByteTokenizer, TokenizationError
 from .attention import scaled_dot_product_attention
+from .model import DecoderBlock, DecoderConfig, DecoderOnlyTransformer, RMSNorm
 from .weights import LayerHandle, WeightStore
 
 __all__ = [
@@ -26,6 +27,10 @@ __all__ = [
     "ByteTokenizer",
     "TokenizationError",
     "scaled_dot_product_attention",
+    "DecoderBlock",
+    "DecoderConfig",
+    "DecoderOnlyTransformer",
+    "RMSNorm",
     "WeightStore",
     "pack_header",
     "parse_memory_limit",

@@ -12,6 +12,7 @@ from tinycode.runtime.tensor_format import TensorFormatError, pack_header, read_
 from tinycode.runtime.ops import matmul
 from tinycode.runtime.tokenizer import ByteTokenizer, TokenizationError
 from tinycode.runtime.attention import scaled_dot_product_attention
+from tinycode.runtime.model import DecoderBlock, DecoderConfig, DecoderOnlyTransformer
 from tinycode.runtime.weights import WeightStore, WeightStoreError
 
 
@@ -191,3 +192,32 @@ def test_scaled_dot_product_attention_returns_finite_values() -> None:
     assert result.shape == (1, 1)
     assert result[0, 0] > 2.0
     assert result[0, 0] < 4.0
+
+
+def test_decoder_only_transformer_returns_next_token_logits() -> None:
+    import numpy as np
+
+    config = DecoderConfig(vocab_size=8, hidden_size=4, intermediate_size=6, num_layers=1, num_heads=2)
+    weights = {
+        "q_proj": np.eye(4, dtype=np.float32),
+        "k_proj": np.eye(4, dtype=np.float32),
+        "v_proj": np.eye(4, dtype=np.float32),
+        "o_proj": np.eye(4, dtype=np.float32),
+        "gate_proj": np.ones((6, 4), dtype=np.float32),
+        "up_proj": np.ones((6, 4), dtype=np.float32),
+        "down_proj": np.ones((4, 6), dtype=np.float32),
+        "input_norm": np.ones(4, dtype=np.float32),
+        "post_norm": np.ones(4, dtype=np.float32),
+    }
+    model = DecoderOnlyTransformer(
+        config,
+        np.ones((8, 4), dtype=np.float32),
+        [DecoderBlock(config, weights)],
+        np.ones(4, dtype=np.float32),
+        np.ones((8, 4), dtype=np.float32),
+    )
+
+    logits = model(np.array([1, 2, 3]))
+
+    assert logits.shape == (3, 8)
+    assert np.isfinite(logits).all()
