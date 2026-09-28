@@ -29,3 +29,4 @@ layer needed for the current computation.
 - CLI configuration: complete — `run` validates model, memory, layer-cache, and KV-cache settings.
 - CPU inference core: in progress — mapped tensors can be passed to CPU executors.
 - tokenizer baseline: complete — UTF-8 text has a reversible byte-token representation.
+- attention core: in progress — CPU scaled dot-product attention is available for 2D sequences.

@@ -11,6 +11,7 @@ from tinycode.runtime.memory import parse_memory_limit
 from tinycode.runtime.tensor_format import TensorFormatError, pack_header, read_header
 from tinycode.runtime.ops import matmul
 from tinycode.runtime.tokenizer import ByteTokenizer, TokenizationError
+from tinycode.runtime.attention import scaled_dot_product_attention
 from tinycode.runtime.weights import WeightStore, WeightStoreError
 
 
@@ -182,3 +183,11 @@ def test_byte_tokenizer_round_trip() -> None:
 def test_byte_tokenizer_rejects_invalid_token() -> None:
     with pytest.raises(TokenizationError):
         ByteTokenizer().decode([256])
+
+
+def test_scaled_dot_product_attention_returns_finite_values() -> None:
+    result = scaled_dot_product_attention([[1.0, 0.0]], [[1.0, 0.0], [0.0, 1.0]], [[2.0], [4.0]])
+
+    assert result.shape == (1, 1)
+    assert result[0, 0] > 2.0
+    assert result[0, 0] < 4.0

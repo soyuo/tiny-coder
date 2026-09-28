@@ -7,6 +7,7 @@ from .runtime.tensor_format import TensorFormatError, TensorHeader, pack_header,
 from .runtime.tensor import TensorView
 from .runtime.ops import matmul
 from .runtime.tokenizer import ByteTokenizer, TokenizationError
+from .runtime.attention import scaled_dot_product_attention
 from .runtime.weights import LayerHandle, WeightStore
 
 __all__ = [
@@ -24,6 +25,7 @@ __all__ = [
     "TensorView",
     "ByteTokenizer",
     "TokenizationError",
+    "scaled_dot_product_attention",
     "WeightStore",
     "pack_header",
     "parse_memory_limit",
