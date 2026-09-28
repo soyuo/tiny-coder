@@ -12,7 +12,7 @@ from tinycode.runtime.tensor_format import TensorFormatError, pack_header, read_
 from tinycode.runtime.ops import matmul
 from tinycode.runtime.tokenizer import ByteTokenizer, TokenizationError
 from tinycode.runtime.attention import scaled_dot_product_attention
-from tinycode.runtime.model import DecoderBlock, DecoderConfig, DecoderOnlyTransformer, DiskDecoderOnlyTransformer
+from tinycode.runtime.model import DecoderBlock, DecoderConfig, DecoderOnlyTransformer, DiskDecoderOnlyTransformer, _load_block_weights
 from tinycode.runtime.packed_format import pack_tensors
 from tinycode.runtime.generation import generate_greedy, generate_greedy_cached, generate_greedy_cached_with_cache, generate_text
 from tinycode.runtime.weights import WeightStore, WeightStoreError
@@ -303,6 +303,19 @@ def test_packed_layer_reads_named_tensors(tmp_path: Path) -> None:
         with store.load_packed_layer(0) as layer:
             assert layer.packed_layer().tensors["q_proj"].shape == (1, 2)
             assert layer.packed_layer().tensor_view("bias").to_numpy().tolist() == [3.0, 4.0]
+
+
+def test_decoder_block_rejects_invalid_projection_shape(tmp_path: Path) -> None:
+    import numpy as np
+
+    packed = pack_tensors([("q_proj", "float32", (1, 2), np.zeros((1, 2), dtype=np.float32).tobytes())])
+    write_layer(tmp_path, 0, packed)
+    config = DecoderConfig(vocab_size=8, hidden_size=4, intermediate_size=6, num_layers=1, num_heads=2)
+
+    with WeightStore(tmp_path) as store:
+        with store.load_packed_layer(0) as layer:
+            with pytest.raises(ValueError, match="q_proj has shape"):
+                _load_block_weights(config, layer.packed_layer())
 
 
 def test_disk_decoder_loads_one_packed_layer_at_a_time(tmp_path: Path) -> None:
