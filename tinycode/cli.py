@@ -5,8 +5,12 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from .runtime.generation import generate_greedy_cached_with_cache
+from .runtime.kv_cache import KVCacheStore
 from .runtime.manifest import ModelManifest, ManifestError
 from .runtime.memory import MemoryLimitError, parse_memory_limit
+from .runtime.model import DiskDecoderOnlyTransformer
+from .runtime.tokenizer import ByteTokenizer, TokenizationError
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -17,6 +21,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--memory-limit", default="1G")
     run.add_argument("--layer-cache", type=int, default=1)
     run.add_argument("--kv-cache", choices=("disk",), default="disk")
+    run.add_argument("--kv-cache-dir", type=Path)
+    run.add_argument("--prompt")
+    run.add_argument("--max-new-tokens", type=int, default=32)
     return parser
 
 
@@ -37,10 +44,29 @@ def run_command(args: argparse.Namespace) -> int:
     if args.layer_cache < 1:
         print("error: layer cache must be at least 1")
         return 2
+    if args.max_new_tokens < 0:
+        print("error: max new tokens must be non-negative")
+        return 2
     print("TinyCode CPU runtime ready")
     print(f"model: {args.model}")
     print(f"layers: {manifest.num_layers}")
     print(f"memory limit: {memory_limit} bytes")
     print(f"layer cache: {args.layer_cache}")
     print(f"KV cache: {args.kv_cache}")
+    if args.prompt is None:
+        return 0
+    if args.kv_cache_dir is None:
+        args.kv_cache_dir = args.model / "kv_cache"
+    try:
+        tokenizer = ByteTokenizer()
+        with DiskDecoderOnlyTransformer.from_model_dir(args.model, layer_cache=args.layer_cache) as model:
+            tokenizer.validate_vocab_size(model.config.vocab_size)
+            store = KVCacheStore(args.kv_cache_dir)
+            cache = model.new_cache(store)
+            token_ids = tokenizer.encode(args.prompt)
+            result = generate_greedy_cached_with_cache(model, token_ids, args.max_new_tokens, cache)
+        print(tokenizer.decode(result))
+    except (OSError, RuntimeError, TokenizationError, ValueError) as exc:
+        print(f"error: {exc}")
+        return 2
     return 0
