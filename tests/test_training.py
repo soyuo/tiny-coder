@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from tinycode.training.dataset import JsonlCodeDataset
+from tinycode.training.dataset import JsonlCodeDataset, JsonlCodeIterableDataset
 from tinycode.training.corpus import build_corpus
 from tinycode.training.model import TorchDecoderConfig
 from tinycode.training.train import _collate_blocks
@@ -35,6 +35,15 @@ def test_jsonl_code_dataset_keeps_unicode_line_separators(tmp_path: Path) -> Non
     dataset = JsonlCodeDataset(path, block_size=4)
 
     assert len(dataset) == 3
+
+
+def test_jsonl_code_iterable_dataset_streams_blocks(tmp_path: Path) -> None:
+    path = tmp_path / "code.jsonl"
+    path.write_text('{"text":"abcdefghi"}\n', encoding="utf-8")
+
+    dataset = JsonlCodeIterableDataset(path, block_size=4)
+
+    assert list(dataset) == [([97, 98, 99, 100], [98, 99, 100, 101]), ([101, 102, 103, 104], [102, 103, 104, 105])]
 
 
 def test_torch_decoder_config_validates_attention_shape() -> None:
@@ -89,6 +98,24 @@ def test_train_jsonl_records_validation_loss(tmp_path: Path) -> None:
     result = train_jsonl(data, tmp_path / "out", config, validation_path=data)
 
     assert result["validation_loss"] is not None
+
+
+def test_train_jsonl_limits_steps(tmp_path: Path) -> None:
+    pytest.importorskip("torch")
+    from tinycode.training import TrainConfig, TorchDecoderConfig, train_jsonl
+
+    data = tmp_path / "data.jsonl"
+    data.write_text('{"text":"def add(a, b): return a + b;"}\n', encoding="utf-8")
+    config = TrainConfig(
+        model=TorchDecoderConfig(hidden_size=16, intermediate_size=32, num_layers=1, num_heads=2, max_sequence_length=8),
+        batch_size=1,
+        epochs=5,
+        max_steps=2,
+    )
+
+    result = train_jsonl(data, tmp_path / "out", config)
+
+    assert result["steps"] == 2
 
 
 def test_train_jsonl_resumes_from_checkpoint(tmp_path: Path) -> None:

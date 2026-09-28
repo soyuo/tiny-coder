@@ -40,6 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--layers", type=int, default=4)
     train.add_argument("--heads", type=int, default=8)
     train.add_argument("--device", default="cpu")
+    train.add_argument("--max-steps", type=int)
     train.add_argument("--validation-data", type=Path)
     train.add_argument("--resume", type=Path)
     export = commands.add_parser("export")
@@ -95,6 +96,7 @@ def train_command(args: argparse.Namespace) -> int:
             epochs=args.epochs,
             learning_rate=args.learning_rate,
             device=args.device,
+            max_steps=args.max_steps,
         )
         result = train_jsonl(
             args.data,

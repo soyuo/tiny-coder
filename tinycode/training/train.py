@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 import json
 
-from .dataset import JsonlCodeDataset
+from .dataset import JsonlCodeIterableDataset
 from .model import TinyCodeDecoder, TorchDecoderConfig, _torch
 
 
@@ -18,6 +18,7 @@ class TrainConfig:
     epochs: int = 1
     learning_rate: float = 3e-4
     device: str = "cpu"
+    max_steps: int | None = None
 
 
 def _collate_blocks(batch: list[tuple[list[int], list[int]]], torch: Any) -> tuple[Any, Any]:
@@ -25,7 +26,7 @@ def _collate_blocks(batch: list[tuple[list[int], list[int]]], torch: Any) -> tup
     return torch.tensor(list(inputs), dtype=torch.long), torch.tensor(list(targets), dtype=torch.long)
 
 
-def _evaluate(model: Any, dataset: JsonlCodeDataset, batch_size: int, device: str, torch: Any) -> float:
+def _evaluate(model: Any, dataset: JsonlCodeIterableDataset, batch_size: int, device: str, torch: Any) -> float:
     loader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
@@ -55,9 +56,9 @@ def train_jsonl(
 ) -> dict[str, Any]:
     torch, _ = _torch()
     config = config or TrainConfig()
-    if config.batch_size < 1 or config.epochs < 1 or config.learning_rate <= 0:
+    if config.batch_size < 1 or config.epochs < 1 or config.learning_rate <= 0 or (config.max_steps is not None and config.max_steps < 1):
         raise ValueError("training parameters must be positive")
-    dataset = JsonlCodeDataset(path, config.model.max_sequence_length)
+    dataset = JsonlCodeIterableDataset(path, config.model.max_sequence_length)
     model = TinyCodeDecoder(config.model).to(config.device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
     if resume_checkpoint is not None:
@@ -71,7 +72,7 @@ def train_jsonl(
     loader = torch.utils.data.DataLoader(
         dataset,
         batch_size=config.batch_size,
-        shuffle=True,
+        shuffle=False,
         collate_fn=lambda batch: _collate_blocks(batch, torch),
     )
     model.train()
@@ -86,9 +87,13 @@ def train_jsonl(
             loss.backward()
             optimizer.step()
             losses.append(float(loss.detach().cpu()))
+            if config.max_steps is not None and len(losses) >= config.max_steps:
+                break
+        if config.max_steps is not None and len(losses) >= config.max_steps:
+            break
     validation_loss = None
     if validation_path is not None:
-        validation = JsonlCodeDataset(validation_path, config.model.max_sequence_length)
+        validation = JsonlCodeIterableDataset(validation_path, config.model.max_sequence_length)
         validation_loss = _evaluate(model, validation, config.batch_size, config.device, torch)
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
