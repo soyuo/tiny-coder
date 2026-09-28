@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import mmap
 from pathlib import Path
 from typing import Any
 
 from .manifest import ModelManifest
+from .kv_cache import KVCacheStore
 from .tensor_format import read_header
 from .weights import WeightStore
 
@@ -35,6 +36,37 @@ class DecoderConfig:
             raise ValueError("hidden size must divide evenly across heads")
         if (self.hidden_size // self.num_heads) % 2:
             raise ValueError("head size must be even for rotary embeddings")
+
+
+@dataclass
+class DecoderKVCache:
+    keys: list[Any | None] = field(default_factory=list)
+    values: list[Any | None] = field(default_factory=list)
+    sequence_length: int = 0
+    disk_store: KVCacheStore | None = None
+
+    def reset(self, num_layers: int) -> None:
+        if self.disk_store is not None:
+            self.disk_store.clear()
+        self.keys = [None] * num_layers
+        self.values = [None] * num_layers
+        self.sequence_length = 0
+
+    def load_layer(self, index: int) -> tuple[Any | None, Any | None]:
+        if self.keys[index] is not None:
+            return self.keys[index], self.values[index]
+        if self.disk_store is None or not self.disk_store.contains(index):
+            return None, None
+        return self.disk_store.get_arrays(index)
+
+    def save_layer(self, index: int, key: Any, value: Any) -> None:
+        if self.disk_store is None:
+            self.keys[index] = key
+            self.values[index] = value
+            return
+        self.disk_store.put_arrays(index, key, value)
+        self.keys[index] = None
+        self.values[index] = None
 
 
 class RMSNorm:
@@ -88,6 +120,42 @@ class DecoderBlock:
         hidden = hidden + (silu * up) @ self.down_proj.T
         return hidden
 
+    def forward_cached(self, hidden: Any, past_key: Any | None, past_value: Any | None) -> tuple[Any, Any, Any]:
+        np = _numpy()
+        normalized = self.input_norm(hidden)
+        sequence_length = normalized.shape[0]
+        head_size = self.config.hidden_size // self.config.num_heads
+        query = (normalized @ self.q_proj.T).reshape(sequence_length, self.config.num_heads, head_size).transpose(1, 0, 2)
+        key = (normalized @ self.k_proj.T).reshape(sequence_length, self.config.num_heads, head_size).transpose(1, 0, 2)
+        value = (normalized @ self.v_proj.T).reshape(sequence_length, self.config.num_heads, head_size).transpose(1, 0, 2)
+        query = _apply_rope(query, self.config.rope_theta, self._position_start(past_key))
+        key = _apply_rope(key, self.config.rope_theta, self._position_start(past_key))
+        if past_key is not None:
+            key = np.concatenate((past_key, key), axis=1)
+            value = np.concatenate((past_value, value), axis=1)
+        scores = query @ key.transpose(0, 2, 1) / np.sqrt(head_size)
+        if sequence_length > 1:
+            past_length = 0 if past_key is None else past_key.shape[1]
+            query_positions = np.arange(past_length, past_length + sequence_length)[:, None]
+            key_positions = np.arange(key.shape[1])[None, :]
+            scores = np.where(key_positions > query_positions, -np.inf, scores)
+        scores -= np.max(scores, axis=-1, keepdims=True)
+        probabilities = np.exp(scores)
+        probabilities /= np.sum(probabilities, axis=-1, keepdims=True)
+        attention = probabilities @ value
+        attention = attention.transpose(1, 0, 2).reshape(sequence_length, self.config.hidden_size)
+        hidden = hidden + attention @ self.o_proj.T
+        normalized = self.post_norm(hidden)
+        gate = normalized @ self.gate_proj.T
+        up = normalized @ self.up_proj.T
+        silu = gate / (1.0 + np.exp(-gate))
+        hidden = hidden + (silu * up) @ self.down_proj.T
+        return hidden, key, value
+
+    @staticmethod
+    def _position_start(past_key: Any | None) -> int:
+        return 0 if past_key is None else int(past_key.shape[1])
+
 
 class DecoderOnlyTransformer:
     """Run a decoder-only Transformer on a token sequence."""
@@ -111,6 +179,34 @@ class DecoderOnlyTransformer:
         hidden = self.embedding[token_ids]
         for block in self.blocks:
             hidden = block(hidden)
+        return self.final_norm(hidden) @ self.lm_head.T
+
+    def new_cache(self, disk_store: KVCacheStore | None = None) -> DecoderKVCache:
+        cache = DecoderKVCache()
+        cache.disk_store = disk_store
+        cache.reset(self.config.num_layers)
+        return cache
+
+    def forward_cached(self, token_ids: Any, cache: DecoderKVCache) -> Any:
+        np = _numpy()
+        token_ids = np.asarray(token_ids, dtype=np.int64)
+        if token_ids.ndim != 1 or token_ids.size == 0:
+            raise ValueError("token IDs must be a non-empty 1D sequence")
+        if np.any(token_ids < 0) or np.any(token_ids >= self.config.vocab_size):
+            raise ValueError("token ID is outside the vocabulary")
+        if len(cache.keys) != self.config.num_layers or len(cache.values) != self.config.num_layers:
+            raise ValueError("cache does not match model layers")
+        if cache.sequence_length and token_ids.size != 1:
+            raise ValueError("cached decoding accepts one token after the initial sequence")
+        hidden = self.embedding[token_ids]
+        for index, block in enumerate(self.blocks):
+            past_key, past_value = cache.load_layer(index)
+            _validate_cached_kv(self.config, cache.sequence_length, past_key, past_value)
+            hidden, cache.keys[index], cache.values[index] = block.forward_cached(
+                hidden, past_key, past_value
+            )
+            cache.save_layer(index, cache.keys[index], cache.values[index])
+        cache.sequence_length += int(token_ids.size)
         return self.final_norm(hidden) @ self.lm_head.T
 
 
@@ -155,6 +251,33 @@ class DiskDecoderOnlyTransformer:
                 packed = layer.packed_layer()
                 block = DecoderBlock(self.config, _load_block_weights(self.config, packed))
                 hidden = block(hidden)
+        return RMSNorm(self.final_norm)(hidden) @ self.lm_head.T
+
+    def new_cache(self, disk_store: KVCacheStore | None = None) -> DecoderKVCache:
+        cache = DecoderKVCache()
+        cache.disk_store = disk_store
+        cache.reset(self.config.num_layers)
+        return cache
+
+    def forward_cached(self, token_ids: Any, cache: DecoderKVCache) -> Any:
+        np = _numpy()
+        token_ids = np.asarray(token_ids, dtype=np.int64)
+        if token_ids.ndim != 1 or token_ids.size == 0 or np.any(token_ids < 0) or np.any(token_ids >= self.config.vocab_size):
+            raise ValueError("invalid token sequence")
+        if len(cache.keys) != self.config.num_layers or len(cache.values) != self.config.num_layers:
+            raise ValueError("cache does not match model layers")
+        if cache.sequence_length and token_ids.size != 1:
+            raise ValueError("cached decoding accepts one token after the initial sequence")
+        hidden = self.embedding[token_ids]
+        for index in range(self.config.num_layers):
+            past_key, past_value = cache.load_layer(index)
+            _validate_cached_kv(self.config, cache.sequence_length, past_key, past_value)
+            with self.weights.hold_packed_layer(index) as layer:
+                packed = layer.packed_layer()
+                block = DecoderBlock(self.config, _load_block_weights(self.config, packed))
+                hidden, key, value = block.forward_cached(hidden, past_key, past_value)
+            cache.save_layer(index, key, value)
+        cache.sequence_length += int(token_ids.size)
         return RMSNorm(self.final_norm)(hidden) @ self.lm_head.T
 
     def close(self) -> None:
@@ -212,10 +335,20 @@ def _load_block_weights(config: DecoderConfig, packed: Any) -> dict[str, Any]:
     return weights
 
 
-def _apply_rope(values: Any, theta: float) -> Any:
+def _validate_cached_kv(config: DecoderConfig, sequence_length: int, key: Any | None, value: Any | None) -> None:
+    if key is None and value is None:
+        return
+    if key is None or value is None:
+        raise ValueError("cached key and value must be provided together")
+    expected = (config.num_heads, sequence_length, config.hidden_size // config.num_heads)
+    if key.shape != expected or value.shape != expected:
+        raise ValueError(f"cached key/value shape must be {expected}")
+
+
+def _apply_rope(values: Any, theta: float, position_start: int = 0) -> Any:
     np = _numpy()
     _, sequence_length, head_size = values.shape
-    positions = np.arange(sequence_length, dtype=np.float32)
+    positions = np.arange(position_start, position_start + sequence_length, dtype=np.float32)
     frequencies = theta ** (-np.arange(0, head_size, 2, dtype=np.float32) / head_size)
     angles = positions[:, None] * frequencies[None, :]
     cosines = np.cos(angles)[None, :, :]
