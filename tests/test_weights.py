@@ -127,6 +127,18 @@ def test_weight_store_prefetches_on_worker(tmp_path: Path) -> None:
         assert store.cached_layers() == ()
 
 
+def test_weight_store_respects_byte_budget(tmp_path: Path) -> None:
+    (tmp_path / "layer_00.bin").write_bytes(b"a" * 8)
+    (tmp_path / "layer_01.bin").write_bytes(b"b" * 8)
+
+    with WeightStore(tmp_path, cache_size=2, byte_budget=8) as store:
+        store.prefetch_layer(0)
+        store.prefetch_layer(1)
+
+        assert store.cached_bytes == 8
+        assert store.cached_layers() == (1,)
+
+
 def test_kv_cache_spills_cold_entries_to_disk(tmp_path: Path) -> None:
     cache = KVCacheStore(tmp_path / "kv", hot_capacity=1)
     cache.put(0, b"zero")
@@ -205,6 +217,16 @@ def test_memory_plan_rejects_invalid_ratios() -> None:
 def test_memory_plan_requires_room_for_one_layer() -> None:
     with pytest.raises(MemoryLimitError, match="one layer"):
         plan_memory(100, 50, kv_ratio=0.3, context_ratio=0.2, reserve_ratio=0.2)
+
+
+def test_kv_cache_respects_hot_byte_budget(tmp_path: Path) -> None:
+    store = KVCacheStore(tmp_path / "kv", hot_capacity=2, hot_bytes=5)
+
+    store.put(0, b"1234")
+    store.put(1, b"56")
+
+    assert store.hot_size == 2
+    assert store.hot_layers() == (1,)
 
 
 def test_cpu_tensor_layer_execution(tmp_path: Path) -> None:

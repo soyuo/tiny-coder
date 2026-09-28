@@ -244,7 +244,13 @@ class DecoderOnlyTransformer:
 class DiskDecoderOnlyTransformer:
     """Run decoder layers by loading one packed layer at a time."""
 
-    def __init__(self, model_dir: str | Path, manifest: ModelManifest, layer_cache: int = 1) -> None:
+    def __init__(
+        self,
+        model_dir: str | Path,
+        manifest: ModelManifest,
+        layer_cache: int = 1,
+        weight_budget: int | None = None,
+    ) -> None:
         required = (manifest.vocab_size, manifest.hidden_size, manifest.intermediate_size, manifest.num_heads)
         if any(value is None for value in required):
             raise ValueError("model manifest lacks decoder dimensions")
@@ -257,7 +263,12 @@ class DiskDecoderOnlyTransformer:
             manifest.rope_theta,
         )
         self.model_dir = Path(model_dir)
-        self.weights = WeightStore(self.model_dir, cache_size=layer_cache, manifest=manifest)
+        self.weights = WeightStore(
+            self.model_dir,
+            cache_size=layer_cache,
+            manifest=manifest,
+            byte_budget=weight_budget,
+        )
         self._tensor_resources = []
         self.embedding, resource = _load_tensor_file(self.model_dir / "embedding.bin")
         self._tensor_resources.append(resource)
@@ -267,9 +278,19 @@ class DiskDecoderOnlyTransformer:
         self._tensor_resources.append(resource)
 
     @classmethod
-    def from_model_dir(cls, model_dir: str | Path, layer_cache: int = 1) -> "DiskDecoderOnlyTransformer":
+    def from_model_dir(
+        cls,
+        model_dir: str | Path,
+        layer_cache: int = 1,
+        weight_budget: int | None = None,
+    ) -> "DiskDecoderOnlyTransformer":
         model_dir = Path(model_dir)
-        return cls(model_dir, ModelManifest.load(model_dir), layer_cache=layer_cache)
+        return cls(
+            model_dir,
+            ModelManifest.load(model_dir),
+            layer_cache=layer_cache,
+            weight_budget=weight_budget,
+        )
 
     def __call__(self, token_ids: Any) -> Any:
         np = _numpy()

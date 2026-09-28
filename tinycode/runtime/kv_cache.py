@@ -15,13 +15,17 @@ class KVCacheError(RuntimeError):
 class KVCacheStore:
     """Keep hot KV entries in memory and spill older entries to disk."""
 
-    def __init__(self, cache_dir: str | Path, hot_capacity: int = 1) -> None:
+    def __init__(self, cache_dir: str | Path, hot_capacity: int = 1, hot_bytes: int | None = None) -> None:
         if hot_capacity < 1:
             raise ValueError("hot_capacity must be at least 1")
+        if hot_bytes is not None and hot_bytes < 1:
+            raise ValueError("hot_bytes must be positive")
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.hot_capacity = hot_capacity
+        self.hot_bytes = hot_bytes
         self._hot: OrderedDict[int, bytes] = OrderedDict()
+        self._hot_size = 0
 
     def path_for(self, layer_index: int) -> Path:
         if layer_index < 0:
@@ -33,7 +37,11 @@ class KVCacheStore:
         if not isinstance(value, bytes):
             raise TypeError("KV value must be bytes")
         self.path_for(layer_index).write_bytes(value)
+        previous = self._hot.pop(layer_index, None)
+        if previous is not None:
+            self._hot_size -= len(previous)
         self._hot[layer_index] = value
+        self._hot_size += len(value)
         self._hot.move_to_end(layer_index)
         self._evict_hot()
 
@@ -51,6 +59,7 @@ class KVCacheStore:
         if layer_index in self._hot:
             value = self._hot.pop(layer_index)
             self._hot[layer_index] = value
+            self._hot_size += len(value)
             return value
         path = self.path_for(layer_index)
         if not path.is_file():
@@ -76,12 +85,21 @@ class KVCacheStore:
 
     def clear_hot(self) -> None:
         self._hot.clear()
+        self._hot_size = 0
 
     def clear(self) -> None:
         self._hot.clear()
+        self._hot_size = 0
         for path in self.cache_dir.glob("layer_*.cache"):
             path.unlink()
 
     def _evict_hot(self) -> None:
-        while len(self._hot) > self.hot_capacity:
-            self._hot.popitem(last=False)
+        while len(self._hot) > self.hot_capacity or (
+            self.hot_bytes is not None and self._hot_size > self.hot_bytes
+        ):
+            _, value = self._hot.popitem(last=False)
+            self._hot_size -= len(value)
+
+    @property
+    def hot_size(self) -> int:
+        return self._hot_size

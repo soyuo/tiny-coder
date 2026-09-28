@@ -52,6 +52,8 @@ def run_command(args: argparse.Namespace) -> int:
     print(f"layers: {manifest.num_layers}")
     print(f"memory limit: {memory_limit} bytes")
     plan = None
+    weight_budget = None
+    kv_budget = None
     if args.layer_cache is None:
         layer_bytes = max((path.stat().st_size for path in args.model.glob("layer_*.bin")), default=memory_limit)
         try:
@@ -60,6 +62,8 @@ def run_command(args: argparse.Namespace) -> int:
             print(f"error: {exc}")
             return 2
         args.layer_cache = plan.layer_cache
+        weight_budget = plan.weights_bytes
+        kv_budget = plan.kv_bytes
     print(f"layer cache: {args.layer_cache}")
     if plan is not None:
         print(f"weights budget: {plan.weights_bytes} bytes")
@@ -74,9 +78,13 @@ def run_command(args: argparse.Namespace) -> int:
         args.kv_cache_dir = args.model / "kv_cache"
     try:
         tokenizer = ByteTokenizer()
-        with DiskDecoderOnlyTransformer.from_model_dir(args.model, layer_cache=args.layer_cache) as model:
+        with DiskDecoderOnlyTransformer.from_model_dir(
+            args.model,
+            layer_cache=args.layer_cache,
+            weight_budget=weight_budget,
+        ) as model:
             tokenizer.validate_vocab_size(model.config.vocab_size)
-            store = KVCacheStore(args.kv_cache_dir)
+            store = KVCacheStore(args.kv_cache_dir, hot_bytes=kv_budget)
             cache = model.new_cache(store)
             token_ids = tokenizer.encode(args.prompt)
             result = generate_greedy_cached_with_cache(model, token_ids, args.max_new_tokens, cache)
