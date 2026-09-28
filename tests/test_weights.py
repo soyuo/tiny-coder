@@ -14,6 +14,7 @@ from tinycode.runtime.tokenizer import ByteTokenizer, TokenizationError
 from tinycode.runtime.attention import scaled_dot_product_attention
 from tinycode.runtime.model import DecoderBlock, DecoderConfig, DecoderOnlyTransformer, DiskDecoderOnlyTransformer
 from tinycode.runtime.packed_format import pack_tensors
+from tinycode.runtime.generation import generate_greedy
 from tinycode.runtime.weights import WeightStore, WeightStoreError
 
 
@@ -260,3 +261,14 @@ def test_disk_decoder_loads_one_packed_layer_at_a_time(tmp_path: Path) -> None:
         logits = model(np.array([1, 2]))
 
     assert logits.shape == (2, 8)
+
+
+def test_greedy_generation_stops_at_eos() -> None:
+    import numpy as np
+
+    class FakeModel:
+        def __call__(self, token_ids: object) -> object:
+            return np.tile(np.array([[0.0, 1.0, 0.0]], dtype=np.float32), (len(token_ids), 1))
+
+    assert generate_greedy(FakeModel(), [0], max_new_tokens=3) == [0, 1, 1, 1]
+    assert generate_greedy(FakeModel(), [0], max_new_tokens=3, eos_token_id=1) == [0, 1]

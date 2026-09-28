@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 from .manifest import ModelManifest
-from .packed_format import PackedLayer
 from .tensor_format import read_header
 from .weights import WeightStore
 

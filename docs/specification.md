@@ -33,3 +33,4 @@ layer needed for the current computation.
 - decoder-only block: in progress — multi-head causal attention, RMSNorm, SwiGLU, and residual paths are connected.
 - packed layer format: in progress — one `layer_XX.bin` can contain named tensor payloads.
 - disk decoder loading: in progress — decoder layers are materialized from packed files on demand.
+- greedy generation: in progress — deterministic next-token generation is available.
