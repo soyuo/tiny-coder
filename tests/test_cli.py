@@ -109,3 +109,24 @@ def test_export_command_writes_packed_model(tmp_path: Path, capsys) -> None:
     assert main(["export", "--checkpoint", str(checkpoint), "--output", str(tmp_path / "model")]) == 0
     assert (tmp_path / "model" / "model.json").is_file()
     assert "model:" in capsys.readouterr().out
+
+
+def test_training_export_and_runtime_pipeline(tmp_path: Path, capsys) -> None:
+    pytest.importorskip("torch")
+    data = tmp_path / "data.jsonl"
+    data.write_text('{"text":"def add(a, b): return a + b;"}\n', encoding="utf-8")
+    checkpoint_dir = tmp_path / "checkpoint"
+    model_dir = tmp_path / "model"
+
+    assert main([
+        "train", "--data", str(data), "--output", str(checkpoint_dir), "--block-size", "8",
+        "--batch-size", "1", "--hidden-size", "16", "--intermediate-size", "32",
+        "--layers", "1", "--heads", "2",
+    ]) == 0
+    assert main(["export", "--checkpoint", str(checkpoint_dir / "checkpoint.pt"), "--output", str(model_dir)]) == 0
+    assert main([
+        "run", "--model", str(model_dir), "--memory-limit", "1M", "--prompt", "a", "--max-new-tokens", "0",
+    ]) == 0
+
+    output = capsys.readouterr().out
+    assert "CPU runtime ready" in output
