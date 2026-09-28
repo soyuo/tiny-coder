@@ -487,6 +487,36 @@ def test_cached_logits_match_full_prefix_logits() -> None:
     np.testing.assert_allclose(cached_next, full_next[-1:], rtol=1e-5, atol=1e-5)
 
 
+def test_disk_cached_logits_match_in_memory_cache(tmp_path: Path) -> None:
+    import numpy as np
+
+    rng = np.random.default_rng(11)
+    config = DecoderConfig(vocab_size=8, hidden_size=4, intermediate_size=6, num_layers=1, num_heads=2)
+    weights = {
+        name: rng.normal(size=shape).astype(np.float32)
+        for name, shape in {
+            "q_proj": (4, 4), "k_proj": (4, 4), "v_proj": (4, 4), "o_proj": (4, 4),
+            "gate_proj": (6, 4), "up_proj": (6, 4), "down_proj": (4, 6),
+            "input_norm": (4,), "post_norm": (4,),
+        }.items()
+    }
+    model = DecoderOnlyTransformer(
+        config, rng.normal(size=(8, 4)).astype(np.float32), [DecoderBlock(config, weights)],
+        rng.normal(size=4).astype(np.float32), rng.normal(size=(8, 4)).astype(np.float32),
+    )
+    prompt = np.array([1, 2, 3], dtype=np.int64)
+    memory_cache = model.new_cache()
+    disk_cache = model.new_cache(KVCacheStore(tmp_path / "kv", hot_capacity=1))
+
+    memory_prompt = model.forward_cached(prompt, memory_cache)
+    disk_prompt = model.forward_cached(prompt, disk_cache)
+    memory_next = model.forward_cached(np.array([4], dtype=np.int64), memory_cache)
+    disk_next = model.forward_cached(np.array([4], dtype=np.int64), disk_cache)
+
+    np.testing.assert_allclose(disk_prompt, memory_prompt, rtol=1e-5, atol=1e-5)
+    np.testing.assert_allclose(disk_next, memory_next, rtol=1e-5, atol=1e-5)
+
+
 def test_cached_generation_can_spill_kv_to_disk(tmp_path: Path) -> None:
     import numpy as np
 

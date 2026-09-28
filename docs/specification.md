@@ -38,5 +38,5 @@ layer needed for the current computation.
 - greedy generation: in progress — deterministic next-token generation is available.
 - rotary position encoding: complete — decoder attention applies RoPE positions.
 - packed decoder shape checks: complete — projection and norm shapes are checked against the manifest.
-- KV-aware generation: in progress — decoder key/value states are reused in memory
-  or through the disk-backed layer cache; repeated KV concatenation remains.
+- KV-aware generation: complete — decoder key/value states are reused in memory
+  or through the disk-backed layer cache; disk serialization only joins full states.
