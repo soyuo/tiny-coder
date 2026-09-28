@@ -391,6 +391,40 @@ def test_disk_decoder_cleans_up_after_tensor_load_failure(tmp_path: Path, monkey
         DiskDecoderOnlyTransformer.from_model_dir(tmp_path)
 
 
+def test_disk_decoder_cleans_up_if_weight_store_close_fails(tmp_path: Path, monkeypatch) -> None:
+    import json
+    import numpy as np
+    import tinycode.runtime.model as model_module
+
+    config = {"num_layers": 1, "vocab_size": 8, "hidden_size": 4, "intermediate_size": 6, "num_heads": 2}
+    (tmp_path / "model.json").write_text(json.dumps(config), encoding="utf-8")
+    (tmp_path / "embedding.bin").write_bytes(
+        pack_header("float32", (8, 4)) + np.ones((8, 4), dtype=np.float32).tobytes()
+    )
+    resources = []
+    original = model_module._load_tensor_file
+    calls = 0
+
+    def fail_on_second_load(path):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("cannot load norm")
+        values, resource = original(path)
+        resources.append(resource)
+        return values, resource
+
+    def fail_close(_store):
+        raise RuntimeError("cannot close weights")
+
+    monkeypatch.setattr(model_module, "_load_tensor_file", fail_on_second_load)
+    monkeypatch.setattr(model_module.WeightStore, "close", fail_close)
+    with pytest.raises(RuntimeError, match="cannot close weights"):
+        DiskDecoderOnlyTransformer.from_model_dir(tmp_path)
+
+    assert all(mapping.closed and file_handle.closed for mapping, file_handle in resources)
+
+
 def test_disk_decoder_close_is_idempotent(tmp_path: Path) -> None:
     import json
     import numpy as np

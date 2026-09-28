@@ -1,8 +1,9 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 
-from tinycode.cli import build_parser, run_command
+from tinycode.cli import build_parser, main, run_command
 from tinycode.runtime.packed_format import pack_tensors
 from tinycode.runtime.tensor_format import pack_header
 
@@ -86,3 +87,64 @@ def test_run_command_reports_selected_repository_context(tmp_path: Path, capsys)
 
     assert run_command(args) == 0
     assert "context files: 1" in capsys.readouterr().out
+
+
+def test_train_command_writes_checkpoint(tmp_path: Path, capsys) -> None:
+    pytest.importorskip("torch")
+    data = tmp_path / "data.jsonl"
+    data.write_text('{"text":"def add(a, b): return a + b;"}\n', encoding="utf-8")
+    assert main(["train", "--data", str(data), "--output", str(tmp_path / "out"), "--block-size", "8", "--batch-size", "1", "--hidden-size", "16", "--intermediate-size", "32", "--layers", "1", "--heads", "2"]) == 0
+    assert (tmp_path / "out" / "checkpoint.pt").is_file()
+    assert "steps:" in capsys.readouterr().out
+
+
+def test_train_command_resumes_checkpoint(tmp_path: Path, capsys) -> None:
+    pytest.importorskip("torch")
+    data = tmp_path / "data.jsonl"
+    data.write_text('{"text":"def add(a, b): return a + b;"}\n', encoding="utf-8")
+    first = tmp_path / "first"
+    resumed = tmp_path / "resumed"
+    options = [
+        "--data", str(data), "--block-size", "8", "--batch-size", "1",
+        "--hidden-size", "16", "--intermediate-size", "32", "--layers", "1", "--heads", "2",
+    ]
+
+    assert main(["train", *options, "--output", str(first)]) == 0
+    assert main(["train", *options, "--output", str(resumed), "--resume", str(first / "checkpoint.pt")]) == 0
+
+    assert (resumed / "checkpoint.pt").is_file()
+    assert "steps:" in capsys.readouterr().out
+
+
+def test_export_command_writes_packed_model(tmp_path: Path, capsys) -> None:
+    torch = pytest.importorskip("torch")
+    from tinycode.training import TinyCodeDecoder, TorchDecoderConfig
+
+    config = TorchDecoderConfig(hidden_size=16, intermediate_size=32, num_layers=1, num_heads=2, max_sequence_length=8)
+    checkpoint = tmp_path / "checkpoint.pt"
+    torch.save({"model": TinyCodeDecoder(config).state_dict(), "config": config.to_dict()}, checkpoint)
+
+    assert main(["export", "--checkpoint", str(checkpoint), "--output", str(tmp_path / "model")]) == 0
+    assert (tmp_path / "model" / "model.json").is_file()
+    assert "model:" in capsys.readouterr().out
+
+
+def test_training_export_and_runtime_pipeline(tmp_path: Path, capsys) -> None:
+    pytest.importorskip("torch")
+    data = tmp_path / "data.jsonl"
+    data.write_text('{"text":"def add(a, b): return a + b;"}\n', encoding="utf-8")
+    checkpoint_dir = tmp_path / "checkpoint"
+    model_dir = tmp_path / "model"
+
+    assert main([
+        "train", "--data", str(data), "--output", str(checkpoint_dir), "--block-size", "8",
+        "--batch-size", "1", "--hidden-size", "16", "--intermediate-size", "32",
+        "--layers", "1", "--heads", "2",
+    ]) == 0
+    assert main(["export", "--checkpoint", str(checkpoint_dir / "checkpoint.pt"), "--output", str(model_dir)]) == 0
+    assert main([
+        "run", "--model", str(model_dir), "--memory-limit", "1M", "--prompt", "a", "--max-new-tokens", "0",
+    ]) == 0
+
+    output = capsys.readouterr().out
+    assert "CPU runtime ready" in output
