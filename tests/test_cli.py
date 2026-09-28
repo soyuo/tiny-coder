@@ -89,6 +89,34 @@ def test_run_command_reports_selected_repository_context(tmp_path: Path, capsys)
     assert "context files: 1" in capsys.readouterr().out
 
 
+def test_benchmark_command_reports_runtime_metrics(tmp_path: Path, capsys) -> None:
+    write_decoder_fixture(tmp_path)
+
+    assert main([
+        "benchmark", "--model", str(tmp_path), "--prompt", "a", "--memory-limit", "16K",
+        "--max-new-tokens", "1", "--iterations", "1",
+    ]) == 0
+
+    output = capsys.readouterr().out
+    assert '"tokens_per_second"' in output
+    assert '"peak_weight_cache_bytes"' in output
+
+
+def test_benchmark_command_supports_disk_kv_and_prefetch(tmp_path: Path, capsys) -> None:
+    write_decoder_fixture(tmp_path)
+
+    assert main([
+        "benchmark", "--model", str(tmp_path), "--prompt", "a", "--memory-limit", "16K",
+        "--layer-cache", "2", "--kv-cache", "disk", "--prefetch", "--max-new-tokens", "1",
+        "--iterations", "2",
+    ]) == 0
+
+    output = capsys.readouterr().out
+    assert '"kv_cache": "disk"' in output
+    assert '"prefetch": true' in output
+    assert '"iterations": 2' in output
+
+
 def test_train_command_writes_checkpoint(tmp_path: Path, capsys) -> None:
     pytest.importorskip("torch")
     data = tmp_path / "data.jsonl"
