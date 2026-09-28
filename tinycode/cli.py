@@ -13,7 +13,7 @@ from .runtime.manifest import ModelManifest, ManifestError
 from .runtime.memory import MemoryLimitError, parse_memory_limit, plan_memory
 from .runtime.model import DiskDecoderOnlyTransformer
 from .runtime.tokenizer import ByteTokenizer, TokenizationError
-from .training import TorchDecoderConfig, TrainConfig, export_checkpoint, train_jsonl
+from .training import TorchDecoderConfig, TrainConfig, build_corpus, export_checkpoint, train_jsonl
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -45,6 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
     export = commands.add_parser("export")
     export.add_argument("--checkpoint", type=Path, required=True)
     export.add_argument("--output", type=Path, required=True)
+    prepare = commands.add_parser("prepare-data")
+    prepare.add_argument("--source", type=Path, required=True)
+    prepare.add_argument("--output", type=Path, required=True)
+    prepare.add_argument("--validation-ratio", type=float, default=0.1)
+    prepare.add_argument("--max-file-bytes", type=int, default=262_144)
     benchmark = commands.add_parser("benchmark")
     benchmark.add_argument("--model", type=Path, required=True)
     benchmark.add_argument("--prompt", required=True)
@@ -69,6 +74,8 @@ def main(argv: list[str] | None = None) -> int:
         return train_command(args)
     if args.command == "export":
         return export_command(args)
+    if args.command == "prepare-data":
+        return prepare_data_command(args)
     if args.command == "benchmark":
         return benchmark_command(args)
     return 2
@@ -114,6 +121,24 @@ def export_command(args: argparse.Namespace) -> int:
         print(f"error: {exc}")
         return 2
     print(f"model: {output}")
+    return 0
+
+
+def prepare_data_command(args: argparse.Namespace) -> int:
+    try:
+        result = build_corpus(
+            args.source,
+            args.output,
+            validation_ratio=args.validation_ratio,
+            max_file_bytes=args.max_file_bytes,
+        )
+    except (OSError, ValueError) as exc:
+        print(f"error: {exc}")
+        return 2
+    print(f"train files: {result['train_files']}")
+    print(f"validation files: {result['validation_files']}")
+    print(f"bytes: {result['bytes']}")
+    print(f"output: {args.output}")
     return 0
 
 
