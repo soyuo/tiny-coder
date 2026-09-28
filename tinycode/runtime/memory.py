@@ -21,6 +21,30 @@ class MemoryPlan:
     prefetch: bool
 
 
+@dataclass(frozen=True)
+class RuntimeMemoryUsage:
+    weights_bytes: int
+    kv_bytes: int
+    context_bytes: int
+
+    @property
+    def total_bytes(self) -> int:
+        return self.weights_bytes + self.kv_bytes + self.context_bytes
+
+
+def collect_memory_usage(
+    weight_store: object | None = None,
+    kv_store: object | None = None,
+    context_bytes: int = 0,
+) -> RuntimeMemoryUsage:
+    """Collect bytes currently held by runtime caches and context."""
+    if context_bytes < 0:
+        raise MemoryLimitError("context bytes must be non-negative")
+    weights_bytes = 0 if weight_store is None else int(weight_store.cached_bytes)
+    kv_bytes = 0 if kv_store is None else int(kv_store.hot_size)
+    return RuntimeMemoryUsage(weights_bytes, kv_bytes, context_bytes)
+
+
 def plan_memory(
     memory_limit: int,
     layer_bytes: int,

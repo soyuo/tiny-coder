@@ -8,7 +8,7 @@ from tinycode.runtime.engine import InferenceRuntime
 from tinycode.runtime.context import RepositoryContext
 from tinycode.runtime.kv_cache import KVCacheError, KVCacheStore
 from tinycode.runtime.manifest import ManifestError, ModelManifest
-from tinycode.runtime.memory import MemoryLimitError, parse_memory_limit, plan_memory
+from tinycode.runtime.memory import MemoryLimitError, collect_memory_usage, parse_memory_limit, plan_memory
 from tinycode.runtime.tensor_format import TensorFormatError, pack_header, read_header
 from tinycode.runtime.ops import matmul
 from tinycode.runtime.tokenizer import ByteTokenizer, TokenizationError
@@ -239,6 +239,26 @@ def test_memory_plan_rejects_invalid_ratios() -> None:
 def test_memory_plan_requires_room_for_one_layer() -> None:
     with pytest.raises(MemoryLimitError, match="one layer"):
         plan_memory(100, 50, kv_ratio=0.3, context_ratio=0.2, reserve_ratio=0.2)
+
+
+def test_collect_memory_usage_combines_runtime_caches() -> None:
+    class WeightStoreStub:
+        cached_bytes = 120
+
+    class KVStoreStub:
+        hot_size = 80
+
+    usage = collect_memory_usage(WeightStoreStub(), KVStoreStub(), context_bytes=40)
+
+    assert usage.weights_bytes == 120
+    assert usage.kv_bytes == 80
+    assert usage.context_bytes == 40
+    assert usage.total_bytes == 240
+
+
+def test_collect_memory_usage_rejects_negative_context() -> None:
+    with pytest.raises(MemoryLimitError, match="context bytes"):
+        collect_memory_usage(context_bytes=-1)
 
 
 def test_kv_cache_respects_hot_byte_budget(tmp_path: Path) -> None:
