@@ -28,3 +28,4 @@ layer needed for the current computation.
 - repository context search: complete — only ranked, limited files enter context.
 - CLI configuration: complete — `run` validates model, memory, layer-cache, and KV-cache settings.
 - CPU inference core: in progress — mapped tensors can be passed to CPU executors.
+- tokenizer baseline: complete — UTF-8 text has a reversible byte-token representation.

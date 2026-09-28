@@ -10,6 +10,7 @@ from tinycode.runtime.manifest import ManifestError, ModelManifest
 from tinycode.runtime.memory import parse_memory_limit
 from tinycode.runtime.tensor_format import TensorFormatError, pack_header, read_header
 from tinycode.runtime.ops import matmul
+from tinycode.runtime.tokenizer import ByteTokenizer, TokenizationError
 from tinycode.runtime.weights import WeightStore, WeightStoreError
 
 
@@ -169,3 +170,15 @@ def test_cpu_tensor_layer_execution(tmp_path: Path) -> None:
         )
 
     assert result.tolist() == [[7.0, 10.0]]
+
+
+def test_byte_tokenizer_round_trip() -> None:
+    tokenizer = ByteTokenizer()
+    text = "def 안녕():\n    pass"
+
+    assert tokenizer.decode(tokenizer.encode(text)) == text
+
+
+def test_byte_tokenizer_rejects_invalid_token() -> None:
+    with pytest.raises(TokenizationError):
+        ByteTokenizer().decode([256])
