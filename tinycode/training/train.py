@@ -25,7 +25,33 @@ def _collate_blocks(batch: list[tuple[list[int], list[int]]], torch: Any) -> tup
     return torch.tensor(list(inputs), dtype=torch.long), torch.tensor(list(targets), dtype=torch.long)
 
 
-def train_jsonl(path: str | Path, output_dir: str | Path, config: TrainConfig | None = None) -> dict[str, Any]:
+def _evaluate(model: Any, dataset: JsonlCodeDataset, batch_size: int, device: str, torch: Any) -> float:
+    loader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        collate_fn=lambda batch: _collate_blocks(batch, torch),
+    )
+    loss_fn = torch.nn.CrossEntropyLoss()
+    total = 0.0
+    count = 0
+    model.eval()
+    with torch.no_grad():
+        for inputs, targets in loader:
+            logits = model(inputs.to(device))
+            loss = loss_fn(logits.reshape(-1, logits.shape[-1]), targets.to(device).reshape(-1))
+            total += float(loss.cpu())
+            count += 1
+    model.train()
+    return total / count
+
+
+def train_jsonl(
+    path: str | Path,
+    output_dir: str | Path,
+    config: TrainConfig | None = None,
+    validation_path: str | Path | None = None,
+) -> dict[str, Any]:
     torch, _ = _torch()
     config = config or TrainConfig()
     if config.batch_size < 1 or config.epochs < 1 or config.learning_rate <= 0:
@@ -52,15 +78,19 @@ def train_jsonl(path: str | Path, output_dir: str | Path, config: TrainConfig | 
             loss.backward()
             optimizer.step()
             losses.append(float(loss.detach().cpu()))
+    validation_loss = None
+    if validation_path is not None:
+        validation = JsonlCodeDataset(validation_path, config.model.max_sequence_length)
+        validation_loss = _evaluate(model, validation, config.batch_size, config.device, torch)
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     checkpoint = output / "checkpoint.pt"
-    torch.save({"model": model.state_dict(), "config": config.model.to_dict(), "loss": losses[-1]}, checkpoint)
+    torch.save({"model": model.state_dict(), "config": config.model.to_dict(), "loss": losses[-1], "validation_loss": validation_loss}, checkpoint)
     (output / "training.json").write_text(
-        json.dumps({"config": asdict(config), "steps": len(losses), "loss": losses[-1]}, default=lambda value: asdict(value)),
+        json.dumps({"config": asdict(config), "steps": len(losses), "loss": losses[-1], "validation_loss": validation_loss}, default=lambda value: asdict(value)),
         encoding="utf-8",
     )
-    return {"checkpoint": str(checkpoint), "steps": len(losses), "loss": losses[-1]}
+    return {"checkpoint": str(checkpoint), "steps": len(losses), "loss": losses[-1], "validation_loss": validation_loss}
 
 
 def load_checkpoint(path: str | Path, device: str = "cpu") -> tuple[Any, TorchDecoderConfig]:
