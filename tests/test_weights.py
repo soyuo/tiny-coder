@@ -12,7 +12,7 @@ from tinycode.runtime.tensor_format import TensorFormatError, pack_header, read_
 from tinycode.runtime.ops import matmul
 from tinycode.runtime.tokenizer import ByteTokenizer, TokenizationError
 from tinycode.runtime.attention import scaled_dot_product_attention
-from tinycode.runtime.model import DecoderBlock, DecoderConfig, DecoderOnlyTransformer, DiskDecoderOnlyTransformer
+from tinycode.runtime.model import DecoderBlock, DecoderConfig, DecoderOnlyTransformer, DiskDecoderOnlyTransformer, _load_block_weights
 from tinycode.runtime.packed_format import pack_tensors
 from tinycode.runtime.generation import generate_greedy, generate_greedy_cached, generate_greedy_cached_with_cache, generate_text
 from tinycode.runtime.weights import WeightStore, WeightStoreError
@@ -127,6 +127,18 @@ def test_weight_store_prefetches_on_worker(tmp_path: Path) -> None:
         assert store.cached_layers() == ()
 
 
+def test_weight_store_respects_byte_budget(tmp_path: Path) -> None:
+    (tmp_path / "layer_00.bin").write_bytes(b"a" * 8)
+    (tmp_path / "layer_01.bin").write_bytes(b"b" * 8)
+
+    with WeightStore(tmp_path, cache_size=2, byte_budget=8) as store:
+        store.prefetch_layer(0)
+        store.prefetch_layer(1)
+
+        assert store.cached_bytes == 8
+        assert store.cached_layers() == (1,)
+
+
 def test_kv_cache_spills_cold_entries_to_disk(tmp_path: Path) -> None:
     cache = KVCacheStore(tmp_path / "kv", hot_capacity=1)
     cache.put(0, b"zero")
@@ -181,6 +193,16 @@ def test_repository_context_returns_relevant_files_with_limits(tmp_path: Path) -
     assert len(results[0].text.encode("utf-8")) <= 20
 
 
+def test_repository_context_applies_byte_limit_across_files(tmp_path: Path) -> None:
+    (tmp_path / "one.py").write_text("refresh token one", encoding="utf-8")
+    (tmp_path / "two.py").write_text("refresh token two", encoding="utf-8")
+
+    results = RepositoryContext(tmp_path, max_files=2, max_bytes=20).search("refresh token")
+
+    assert len(results) == 2
+    assert sum(len(item.text.encode("utf-8")) for item in results) <= 20
+
+
 def test_memory_limit_parser() -> None:
     assert parse_memory_limit("512M") == 512 * 1024**2
     assert parse_memory_limit("1G") == 1024**3
@@ -205,6 +227,18 @@ def test_memory_plan_rejects_invalid_ratios() -> None:
 def test_memory_plan_requires_room_for_one_layer() -> None:
     with pytest.raises(MemoryLimitError, match="one layer"):
         plan_memory(100, 50, kv_ratio=0.3, context_ratio=0.2, reserve_ratio=0.2)
+
+
+def test_kv_cache_respects_hot_byte_budget(tmp_path: Path) -> None:
+    store = KVCacheStore(tmp_path / "kv", hot_capacity=2, hot_bytes=5)
+
+    store.put(0, b"1234")
+    store.put(1, b"56")
+
+    assert store.hot_size == 2
+    assert store.hot_layers() == (1,)
+    assert store.get(1) == b"56"
+    assert store.hot_size == 2
 
 
 def test_cpu_tensor_layer_execution(tmp_path: Path) -> None:
@@ -283,6 +317,19 @@ def test_packed_layer_reads_named_tensors(tmp_path: Path) -> None:
             assert layer.packed_layer().tensor_view("bias").to_numpy().tolist() == [3.0, 4.0]
 
 
+def test_decoder_block_rejects_invalid_projection_shape(tmp_path: Path) -> None:
+    import numpy as np
+
+    packed = pack_tensors([("q_proj", "float32", (1, 2), np.zeros((1, 2), dtype=np.float32).tobytes())])
+    write_layer(tmp_path, 0, packed)
+    config = DecoderConfig(vocab_size=8, hidden_size=4, intermediate_size=6, num_layers=1, num_heads=2)
+
+    with WeightStore(tmp_path) as store:
+        with store.load_packed_layer(0) as layer:
+            with pytest.raises(ValueError, match="q_proj has shape"):
+                _load_block_weights(config, layer.packed_layer())
+
+
 def test_disk_decoder_loads_one_packed_layer_at_a_time(tmp_path: Path) -> None:
     import json
     import numpy as np
@@ -306,6 +353,31 @@ def test_disk_decoder_loads_one_packed_layer_at_a_time(tmp_path: Path) -> None:
         logits = model(np.array([1, 2]))
 
     assert logits.shape == (2, 8)
+
+
+def test_disk_decoder_cleans_up_after_tensor_load_failure(tmp_path: Path, monkeypatch) -> None:
+    import json
+    import numpy as np
+    import tinycode.runtime.model as model_module
+
+    config = {"num_layers": 1, "vocab_size": 8, "hidden_size": 4, "intermediate_size": 6, "num_heads": 2}
+    (tmp_path / "model.json").write_text(json.dumps(config), encoding="utf-8")
+    (tmp_path / "embedding.bin").write_bytes(
+        pack_header("float32", (8, 4)) + np.ones((8, 4), dtype=np.float32).tobytes()
+    )
+    original = model_module._load_tensor_file
+    calls = 0
+
+    def fail_on_second_load(path):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("cannot load norm")
+        return original(path)
+
+    monkeypatch.setattr(model_module, "_load_tensor_file", fail_on_second_load)
+    with pytest.raises(OSError, match="cannot load norm"):
+        DiskDecoderOnlyTransformer.from_model_dir(tmp_path)
 
 
 def test_disk_decoder_cached_forward_keeps_previous_kv(tmp_path: Path) -> None:
@@ -425,6 +497,36 @@ def test_cached_logits_match_full_prefix_logits() -> None:
 
     np.testing.assert_allclose(cached_prompt, full_prompt, rtol=1e-5, atol=1e-5)
     np.testing.assert_allclose(cached_next, full_next[-1:], rtol=1e-5, atol=1e-5)
+
+
+def test_disk_cached_logits_match_in_memory_cache(tmp_path: Path) -> None:
+    import numpy as np
+
+    rng = np.random.default_rng(11)
+    config = DecoderConfig(vocab_size=8, hidden_size=4, intermediate_size=6, num_layers=1, num_heads=2)
+    weights = {
+        name: rng.normal(size=shape).astype(np.float32)
+        for name, shape in {
+            "q_proj": (4, 4), "k_proj": (4, 4), "v_proj": (4, 4), "o_proj": (4, 4),
+            "gate_proj": (6, 4), "up_proj": (6, 4), "down_proj": (4, 6),
+            "input_norm": (4,), "post_norm": (4,),
+        }.items()
+    }
+    model = DecoderOnlyTransformer(
+        config, rng.normal(size=(8, 4)).astype(np.float32), [DecoderBlock(config, weights)],
+        rng.normal(size=4).astype(np.float32), rng.normal(size=(8, 4)).astype(np.float32),
+    )
+    prompt = np.array([1, 2, 3], dtype=np.int64)
+    memory_cache = model.new_cache()
+    disk_cache = model.new_cache(KVCacheStore(tmp_path / "kv", hot_capacity=1))
+
+    memory_prompt = model.forward_cached(prompt, memory_cache)
+    disk_prompt = model.forward_cached(prompt, disk_cache)
+    memory_next = model.forward_cached(np.array([4], dtype=np.int64), memory_cache)
+    disk_next = model.forward_cached(np.array([4], dtype=np.int64), disk_cache)
+
+    np.testing.assert_allclose(disk_prompt, memory_prompt, rtol=1e-5, atol=1e-5)
+    np.testing.assert_allclose(disk_next, memory_next, rtol=1e-5, atol=1e-5)
 
 
 def test_cached_generation_can_spill_kv_to_disk(tmp_path: Path) -> None:

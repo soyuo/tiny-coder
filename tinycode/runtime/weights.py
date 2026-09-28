@@ -105,13 +105,18 @@ class WeightStore:
         model_dir: str | Path,
         cache_size: int = 1,
         manifest: ModelManifest | None = None,
+        byte_budget: int | None = None,
     ) -> None:
         if cache_size < 1:
             raise ValueError("cache_size must be at least 1")
+        if byte_budget is not None and byte_budget < 1:
+            raise ValueError("byte_budget must be positive")
         self.model_dir = Path(model_dir)
         self.cache_size = cache_size
+        self.byte_budget = byte_budget
         self.manifest = manifest
         self._cache: OrderedDict[int, LayerHandle] = OrderedDict()
+        self._cached_bytes = 0
         self._lock = RLock()
         self._pinned: dict[int, int] = {}
         self._prefetcher = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tinycode-prefetch")
@@ -152,6 +157,7 @@ class WeightStore:
                 raise
 
             self._cache[index] = handle
+            self._cached_bytes += handle.size
             self._evict_excess()
             return handle
 
@@ -166,6 +172,7 @@ class WeightStore:
                 if handle.leases > 0:
                     return
             self._cache.pop(index, None)
+            self._cached_bytes -= handle.size
             handle._close_mapping()
 
     @contextmanager
@@ -251,10 +258,18 @@ class WeightStore:
         return iter(self._cache)
 
     def _evict_excess(self) -> None:
-        while len(self._cache) > self.cache_size:
+        while len(self._cache) > self.cache_size or (
+            self.byte_budget is not None and self._cached_bytes > self.byte_budget
+        ):
             candidate = next(((index, handle) for index, handle in self._cache.items() if index not in self._pinned and handle.leases == 0), None)
             if candidate is None:
                 return
             oldest_index, oldest = candidate
             del self._cache[oldest_index]
+            self._cached_bytes -= oldest.size
             oldest._close_mapping()
+
+    @property
+    def cached_bytes(self) -> int:
+        with self._lock:
+            return self._cached_bytes

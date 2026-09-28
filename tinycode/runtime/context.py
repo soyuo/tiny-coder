@@ -40,11 +40,21 @@ class RepositoryContext:
                 continue
             score = self._score(path, text, terms)
             if score:
-                encoded = text.encode("utf-8")[: self.max_bytes]
-                limited_text = encoded.decode("utf-8", errors="ignore")
-                matches.append(ContextFile(path, limited_text, score))
+                matches.append(ContextFile(path, text, score))
         matches.sort(key=lambda item: (-item.score, str(item.path)))
-        return matches[: self.max_files]
+        selected: list[ContextFile] = []
+        used_bytes = 0
+        for item in matches[: self.max_files]:
+            remaining = self.max_bytes - used_bytes
+            if remaining <= 0:
+                break
+            encoded = item.text.encode("utf-8")[:remaining]
+            limited_text = encoded.decode("utf-8", errors="ignore")
+            if not limited_text:
+                continue
+            selected.append(ContextFile(item.path, limited_text, item.score))
+            used_bytes += len(limited_text.encode("utf-8"))
+        return selected
 
     def _files(self):
         for path in self.root.rglob("*"):

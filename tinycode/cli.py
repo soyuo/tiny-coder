@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 
 from .runtime.generation import generate_greedy_cached_with_cache
+from .runtime.context import RepositoryContext
 from .runtime.kv_cache import KVCacheStore
 from .runtime.manifest import ModelManifest, ManifestError
 from .runtime.memory import MemoryLimitError, parse_memory_limit, plan_memory
@@ -23,6 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--kv-cache", choices=("disk",), default="disk")
     run.add_argument("--kv-cache-dir", type=Path)
     run.add_argument("--prompt")
+    run.add_argument("--repository", type=Path)
     run.add_argument("--max-new-tokens", type=int, default=32)
     return parser
 
@@ -52,6 +54,9 @@ def run_command(args: argparse.Namespace) -> int:
     print(f"layers: {manifest.num_layers}")
     print(f"memory limit: {memory_limit} bytes")
     plan = None
+    weight_budget = None
+    kv_budget = None
+    context_budget = 64_000
     if args.layer_cache is None:
         layer_bytes = max((path.stat().st_size for path in args.model.glob("layer_*.bin")), default=memory_limit)
         try:
@@ -60,6 +65,9 @@ def run_command(args: argparse.Namespace) -> int:
             print(f"error: {exc}")
             return 2
         args.layer_cache = plan.layer_cache
+        weight_budget = plan.weights_bytes
+        kv_budget = plan.kv_bytes
+        context_budget = plan.context_bytes
     print(f"layer cache: {args.layer_cache}")
     if plan is not None:
         print(f"weights budget: {plan.weights_bytes} bytes")
@@ -74,11 +82,23 @@ def run_command(args: argparse.Namespace) -> int:
         args.kv_cache_dir = args.model / "kv_cache"
     try:
         tokenizer = ByteTokenizer()
-        with DiskDecoderOnlyTransformer.from_model_dir(args.model, layer_cache=args.layer_cache) as model:
+        with DiskDecoderOnlyTransformer.from_model_dir(
+            args.model,
+            layer_cache=args.layer_cache,
+            weight_budget=weight_budget,
+            prefetch=plan.prefetch if plan is not None else False,
+        ) as model:
             tokenizer.validate_vocab_size(model.config.vocab_size)
-            store = KVCacheStore(args.kv_cache_dir)
+            store = KVCacheStore(args.kv_cache_dir, hot_bytes=kv_budget)
+            prompt = args.prompt
+            if args.repository is not None:
+                files = RepositoryContext(args.repository, max_bytes=context_budget).search(prompt)
+                context = "\n\n".join(f"[{item.path}]\n{item.text}" for item in files)
+                if context:
+                    prompt = f"{prompt}\n\nRelevant repository context:\n{context}"
+                print(f"context files: {len(files)}")
             cache = model.new_cache(store)
-            token_ids = tokenizer.encode(args.prompt)
+            token_ids = tokenizer.encode(prompt)
             result = generate_greedy_cached_with_cache(model, token_ids, args.max_new_tokens, cache)
         print(tokenizer.decode(result))
     except (OSError, RuntimeError, TokenizationError, ValueError) as exc:
