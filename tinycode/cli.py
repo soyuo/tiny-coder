@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from .benchmark import BenchmarkConfig, benchmark_json
 from .runtime.generation import generate_greedy_cached_with_cache
 from .runtime.context import RepositoryContext
 from .runtime.kv_cache import KVCacheStore
@@ -44,6 +45,19 @@ def build_parser() -> argparse.ArgumentParser:
     export = commands.add_parser("export")
     export.add_argument("--checkpoint", type=Path, required=True)
     export.add_argument("--output", type=Path, required=True)
+    benchmark = commands.add_parser("benchmark")
+    benchmark.add_argument("--model", type=Path, required=True)
+    benchmark.add_argument("--prompt", required=True)
+    benchmark.add_argument("--memory-limit", default="1G")
+    benchmark.add_argument("--layer-cache", type=int)
+    benchmark.add_argument("--kv-cache", choices=("memory", "disk"), default="memory")
+    benchmark.add_argument("--kv-cache-dir", type=Path)
+    benchmark.add_argument("--max-new-tokens", type=int, default=32)
+    benchmark.add_argument("--iterations", type=int, default=1)
+    prefetch = benchmark.add_mutually_exclusive_group()
+    prefetch.add_argument("--prefetch", dest="prefetch", action="store_true")
+    prefetch.add_argument("--no-prefetch", dest="prefetch", action="store_false")
+    benchmark.set_defaults(prefetch=None)
     return parser
 
 
@@ -55,6 +69,8 @@ def main(argv: list[str] | None = None) -> int:
         return train_command(args)
     if args.command == "export":
         return export_command(args)
+    if args.command == "benchmark":
+        return benchmark_command(args)
     return 2
 
 
@@ -98,6 +114,25 @@ def export_command(args: argparse.Namespace) -> int:
         print(f"error: {exc}")
         return 2
     print(f"model: {output}")
+    return 0
+
+
+def benchmark_command(args: argparse.Namespace) -> int:
+    try:
+        print(benchmark_json(BenchmarkConfig(
+            model_dir=args.model,
+            prompt=args.prompt,
+            memory_limit=args.memory_limit,
+            layer_cache=args.layer_cache,
+            kv_cache=args.kv_cache,
+            kv_cache_dir=args.kv_cache_dir,
+            max_new_tokens=args.max_new_tokens,
+            iterations=args.iterations,
+            prefetch=args.prefetch,
+        )))
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"error: {exc}")
+        return 2
     return 0
 
 
