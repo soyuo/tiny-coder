@@ -7,7 +7,7 @@ from tinycode.runtime.engine import InferenceRuntime
 from tinycode.runtime.context import RepositoryContext
 from tinycode.runtime.kv_cache import KVCacheError, KVCacheStore
 from tinycode.runtime.manifest import ManifestError, ModelManifest
-from tinycode.runtime.memory import parse_memory_limit
+from tinycode.runtime.memory import MemoryLimitError, parse_memory_limit, plan_memory
 from tinycode.runtime.tensor_format import TensorFormatError, pack_header, read_header
 from tinycode.runtime.ops import matmul
 from tinycode.runtime.tokenizer import ByteTokenizer, TokenizationError
@@ -184,6 +184,27 @@ def test_repository_context_returns_relevant_files_with_limits(tmp_path: Path) -
 def test_memory_limit_parser() -> None:
     assert parse_memory_limit("512M") == 512 * 1024**2
     assert parse_memory_limit("1G") == 1024**3
+
+
+def test_memory_plan_allocates_cache_and_reserve() -> None:
+    plan = plan_memory(1024, 100)
+
+    assert plan.weights_bytes == 411
+    assert plan.kv_bytes == 307
+    assert plan.context_bytes == 102
+    assert plan.reserve_bytes == 204
+    assert plan.layer_cache == 4
+    assert plan.prefetch is True
+
+
+def test_memory_plan_rejects_invalid_ratios() -> None:
+    with pytest.raises(MemoryLimitError, match="ratios"):
+        plan_memory(1024, 100, kv_ratio=0.8, context_ratio=0.2, reserve_ratio=0.1)
+
+
+def test_memory_plan_requires_room_for_one_layer() -> None:
+    with pytest.raises(MemoryLimitError, match="one layer"):
+        plan_memory(100, 50, kv_ratio=0.3, context_ratio=0.2, reserve_ratio=0.2)
 
 
 def test_cpu_tensor_layer_execution(tmp_path: Path) -> None:
