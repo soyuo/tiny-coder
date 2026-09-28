@@ -4,6 +4,7 @@ from .runtime.kv_cache import KVCacheError, KVCacheStore
 from .runtime.manifest import ManifestError, ModelManifest
 from .runtime.memory import MemoryLimitError, parse_memory_limit
 from .runtime.tensor_format import TensorFormatError, TensorHeader, pack_header, read_header
+from .runtime.tensor import TensorView
 from .runtime.weights import LayerHandle, WeightStore
 
 __all__ = [
@@ -18,6 +19,7 @@ __all__ = [
     "ModelManifest",
     "TensorFormatError",
     "TensorHeader",
+    "TensorView",
     "WeightStore",
     "pack_header",
     "parse_memory_limit",

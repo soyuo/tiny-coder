@@ -11,6 +11,7 @@ from threading import RLock
 from typing import Iterator
 
 from .manifest import ModelManifest
+from .tensor import TensorView
 from .tensor_format import TensorHeader, TensorFormatError, read_header
 
 
@@ -61,6 +62,10 @@ class LayerHandle:
         if header.data_offset + header.data_size > self.size:
             raise TensorFormatError("tensor payload is truncated")
         return header
+
+    def tensor_view(self) -> TensorView:
+        """Return a CPU tensor view over the mapped payload."""
+        return TensorView(self.tensor_header(), self.mapping)
 
 
 class WeightStore:

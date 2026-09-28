@@ -9,6 +9,7 @@ from tinycode.runtime.kv_cache import KVCacheError, KVCacheStore
 from tinycode.runtime.manifest import ManifestError, ModelManifest
 from tinycode.runtime.memory import parse_memory_limit
 from tinycode.runtime.tensor_format import TensorFormatError, pack_header, read_header
+from tinycode.runtime.tensor import TensorView
 from tinycode.runtime.weights import WeightStore, WeightStoreError
 
 
@@ -109,6 +110,20 @@ def test_weight_store_rejects_truncated_tensor_layer(tmp_path: Path) -> None:
     with WeightStore(tmp_path) as store:
         with pytest.raises(TensorFormatError, match="truncated"):
             store.load_tensor_layer(0)
+
+
+def test_tensor_view_requires_numpy_or_decodes_payload(tmp_path: Path) -> None:
+    payload = b"\x00\x00\x80?\x00\x00\x00@"
+    write_layer(tmp_path, 0, pack_header("float32", (2,)) + payload)
+
+    with WeightStore(tmp_path) as store:
+        view = store.load_tensor_layer(0).tensor_view()
+        try:
+        values = view.to_numpy()
+        except RuntimeError as exc:
+            assert "NumPy" in str(exc)
+        else:
+            assert values.tolist() == [1.0, 2.0]
 
 
 def test_weight_store_prefetches_on_worker(tmp_path: Path) -> None:

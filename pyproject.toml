@@ -9,6 +9,9 @@ description = "A CPU-only, disk-backed runtime for memory-constrained code gener
 requires-python = ">=3.10"
 dependencies = []
 
+[project.optional-dependencies]
+tensor = ["numpy>=1.26"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
