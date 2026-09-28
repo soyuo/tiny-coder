@@ -26,9 +26,16 @@ class InferenceRuntime:
         """Apply layers in order."""
         state = hidden_state
         for index in layer_indices:
-            layer = self.weights.load_layer(index)
-            state = execute_layer(state, layer)
-            self.weights.unload_layer(index)
+            with self.weights.hold_layer(index) as layer:
+                state = execute_layer(state, layer)
+        return state
+
+    def run_tensor_layers(self, hidden_state: object, layer_indices: Iterable[int], execute_layer: LayerExecutor) -> object:
+        """Run layers after decoding each mapped payload as a CPU tensor."""
+        state = hidden_state
+        for index in layer_indices:
+            with self.weights.hold_tensor_layer(index) as layer:
+                state = execute_layer(state, layer.tensor_view().to_numpy())
         return state
 
     def close(self) -> None:

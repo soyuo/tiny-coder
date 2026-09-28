@@ -27,3 +27,13 @@ layer needed for the current computation.
 - disk-backed KV cache: complete — hot entries are bounded and older entries remain on disk.
 - repository context search: complete — only ranked, limited files enter context.
 - CLI configuration: complete — `run` validates model, memory, layer-cache, and KV-cache settings.
+- CPU inference core: in progress — mapped tensors can be passed to CPU executors.
+- tokenizer baseline: complete — UTF-8 text has a reversible byte-token representation.
+- attention core: in progress — CPU scaled dot-product attention is available for 2D sequences.
+- decoder-only block: in progress — multi-head causal attention, RMSNorm, SwiGLU, and residual paths are connected.
+- packed layer format: in progress — one `layer_XX.bin` can contain named tensor payloads.
+- disk decoder loading: in progress — decoder layers are materialized from packed files on demand.
+- greedy generation: in progress — deterministic next-token generation is available.
+- rotary position encoding: complete — decoder attention applies RoPE positions.
+- packed decoder shape checks: complete — projection and norm shapes are checked against the manifest.
+- KV-aware generation: pending — greedy generation currently recomputes the full prefix.

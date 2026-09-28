@@ -4,7 +4,14 @@ from .kv_cache import KVCacheError, KVCacheStore
 from .manifest import ManifestError, ModelManifest
 from .memory import MemoryLimitError, parse_memory_limit
 from .tensor_format import TensorFormatError, TensorHeader, pack_header, read_header
-from .weights import LayerHandle, WeightStore
+from .tensor import TensorView
+from .ops import matmul
+from .tokenizer import ByteTokenizer, TokenizationError
+from .attention import scaled_dot_product_attention
+from .model import DecoderBlock, DecoderConfig, DecoderOnlyTransformer, DiskDecoderOnlyTransformer, RMSNorm
+from .packed_format import PackedLayer, PackedTensor, pack_tensors, read_packed_layer
+from .generation import generate_greedy, generate_text
+from .weights import LayerHandle, LayerLease, WeightStore
 
 __all__ = [
     "InferenceRuntime",
@@ -13,13 +20,30 @@ __all__ = [
     "KVCacheStore",
     "RepositoryContext",
     "LayerHandle",
+    "LayerLease",
     "ManifestError",
     "MemoryLimitError",
     "ModelManifest",
     "TensorFormatError",
     "TensorHeader",
+    "TensorView",
+    "ByteTokenizer",
+    "TokenizationError",
+    "scaled_dot_product_attention",
+    "DecoderBlock",
+    "DecoderConfig",
+    "DecoderOnlyTransformer",
+    "DiskDecoderOnlyTransformer",
+    "RMSNorm",
+    "PackedLayer",
+    "PackedTensor",
+    "pack_tensors",
+    "read_packed_layer",
+    "generate_greedy",
+    "generate_text",
     "WeightStore",
     "pack_header",
     "parse_memory_limit",
     "read_header",
+    "matmul",
 ]

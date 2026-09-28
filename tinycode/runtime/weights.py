@@ -9,8 +9,11 @@ import mmap
 from pathlib import Path
 from threading import RLock
 from typing import Iterator
+from contextlib import contextmanager
 
 from .manifest import ModelManifest
+from .packed_format import PackedLayer, read_packed_layer
+from .tensor import TensorView
 from .tensor_format import TensorHeader, TensorFormatError, read_header
 
 
@@ -27,16 +30,11 @@ class LayerHandle:
     size: int
     mapping: mmap.mmap
     _file: object
+    leases: int = 0
 
-    def close(self) -> None:
+    def _close_mapping(self) -> None:
         self.mapping.close()
         self._file.close()
-
-    def __enter__(self) -> "LayerHandle":
-        return self
-
-    def __exit__(self, *_: object) -> None:
-        self.close()
 
     def __len__(self) -> int:
         return self.size
@@ -62,6 +60,42 @@ class LayerHandle:
             raise TensorFormatError("tensor payload is truncated")
         return header
 
+    def tensor_view(self) -> TensorView:
+        """Return a CPU tensor view over the mapped payload."""
+        return TensorView(self.tensor_header(), self.mapping)
+
+    def packed_layer(self) -> PackedLayer:
+        """Read the packed tensor index from the mapped layer."""
+        position = self.mapping.tell()
+        self.mapping.seek(0)
+        try:
+            return read_packed_layer(self.mapping)
+        finally:
+            self.mapping.seek(position)
+
+
+class LayerLease:
+    """Owned access to a layer handle."""
+
+    def __init__(self, store: "WeightStore", index: int, handle: LayerHandle) -> None:
+        self._store = store
+        self._index = index
+        self.handle = handle
+        self._released = False
+
+    def __enter__(self) -> LayerHandle:
+        return self.handle
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if not self._released:
+            self._released = True
+            self._store.unload_layer(self._index)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self.handle, name)
 
 class WeightStore:
     """Read layers from disk with a bounded LRU cache."""
@@ -79,6 +113,7 @@ class WeightStore:
         self.manifest = manifest
         self._cache: OrderedDict[int, LayerHandle] = OrderedDict()
         self._lock = RLock()
+        self._pinned: dict[int, int] = {}
         self._prefetcher = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tinycode-prefetch")
 
     def layer_path(self, index: int) -> Path:
@@ -91,11 +126,13 @@ class WeightStore:
         """Return the manifest layer count, if loaded."""
         return self.manifest.num_layers if self.manifest else None
 
-    def load_layer(self, index: int) -> LayerHandle:
+    def load_layer(self, index: int, *, lease: bool = True) -> LayerHandle:
         """Map a layer and return its handle."""
         with self._lock:
             if index in self._cache:
                 handle = self._cache.pop(index)
+                if lease:
+                    handle.leases += 1
                 self._cache[index] = handle
                 return handle
 
@@ -109,7 +146,7 @@ class WeightStore:
                 if size == 0:
                     raise WeightStoreError(f"layer file is empty: {path}")
                 mapping = mmap.mmap(file_handle.fileno(), length=0, access=mmap.ACCESS_READ)
-                handle = LayerHandle(index, path, size, mapping, file_handle)
+                handle = LayerHandle(index, path, size, mapping, file_handle, 1 if lease else 0)
             except Exception:
                 file_handle.close()
                 raise
@@ -121,11 +158,46 @@ class WeightStore:
     def unload_layer(self, index: int) -> None:
         """Remove a cached layer mapping."""
         with self._lock:
-            handle = self._cache.pop(index, None)
-            if handle is not None:
-                handle.close()
+            handle = self._cache.get(index)
+            if handle is None:
+                return
+            if handle.leases > 0:
+                handle.leases -= 1
+                if handle.leases > 0:
+                    return
+            self._cache.pop(index, None)
+            handle._close_mapping()
 
-    def load_tensor_layer(self, index: int) -> LayerHandle:
+    @contextmanager
+    def hold_layer(self, index: int) -> Iterator[LayerHandle]:
+        """Keep a layer out of eviction while it is in use."""
+        with self._lock:
+            layer = self.load_layer(index)
+            self._pinned[index] = self._pinned.get(index, 0) + 1
+        try:
+            yield layer
+        finally:
+            with self._lock:
+                remaining = self._pinned.get(index, 1) - 1
+                if remaining > 0:
+                    self._pinned[index] = remaining
+                else:
+                    self._pinned.pop(index, None)
+                    self.unload_layer(index)
+
+    @contextmanager
+    def hold_tensor_layer(self, index: int) -> Iterator[LayerHandle]:
+        with self.hold_layer(index) as layer:
+            layer.tensor_header()
+            yield layer
+
+    @contextmanager
+    def hold_packed_layer(self, index: int) -> Iterator[LayerHandle]:
+        with self.hold_layer(index) as layer:
+            layer.packed_layer()
+            yield layer
+
+    def load_tensor_layer(self, index: int) -> LayerLease:
         """Map a layer and validate its tensor header."""
         layer = self.load_layer(index)
         try:
@@ -133,20 +205,37 @@ class WeightStore:
         except Exception:
             self.unload_layer(index)
             raise
-        return layer
+        return LayerLease(self, index, layer)
+
+    def load_packed_layer(self, index: int) -> LayerLease:
+        """Map and validate a packed layer."""
+        layer = self.load_layer(index)
+        try:
+            layer.packed_layer()
+        except Exception:
+            self.unload_layer(index)
+            raise
+        return LayerLease(self, index, layer)
 
     def prefetch_layer(self, index: int) -> None:
         """Load a layer into the cache."""
-        self.load_layer(index)
+        self.load_layer(index, lease=False)
 
-    def prefetch_layer_async(self, index: int) -> Future[LayerHandle]:
+    def prefetch_layer_async(self, index: int) -> Future[None]:
         """Load a layer on the prefetch worker."""
-        return self._prefetcher.submit(self.load_layer, index)
+        return self._prefetcher.submit(self.prefetch_layer, index)
 
     def close(self) -> None:
+        with self._lock:
+            if any(handle.leases > 0 for handle in self._cache.values()):
+                raise RuntimeError("cannot close weight store while layers are leased")
         self._prefetcher.shutdown(wait=True, cancel_futures=True)
-        for index in list(self._cache):
-            self.unload_layer(index)
+        with self._lock:
+            handles = list(self._cache.values())
+            self._cache.clear()
+            self._pinned.clear()
+        for handle in handles:
+            handle._close_mapping()
 
     def __enter__(self) -> "WeightStore":
         return self
@@ -163,6 +252,9 @@ class WeightStore:
 
     def _evict_excess(self) -> None:
         while len(self._cache) > self.cache_size:
-            oldest_index, oldest = self._cache.popitem(last=False)
-            del oldest_index
-            oldest.close()
+            candidate = next(((index, handle) for index, handle in self._cache.items() if index not in self._pinned and handle.leases == 0), None)
+            if candidate is None:
+                return
+            oldest_index, oldest = candidate
+            del self._cache[oldest_index]
+            oldest._close_mapping()
