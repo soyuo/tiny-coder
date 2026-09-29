@@ -3,6 +3,7 @@ import json
 
 import pytest
 
+from tinycode.runtime.tokenizer import CodeTokenizer
 from tinycode.training.dataset import JsonlCodeDataset, JsonlCodeIterableDataset
 from tinycode.training.corpus import build_corpus
 from tinycode.training.model import TorchDecoderConfig
@@ -45,6 +46,18 @@ def test_jsonl_code_iterable_dataset_streams_blocks(tmp_path: Path) -> None:
     dataset = JsonlCodeIterableDataset(path, block_size=4)
 
     assert list(dataset) == [([97, 98, 99, 100], [98, 99, 100, 101]), ([101, 102, 103, 104], [102, 103, 104, 105])]
+
+
+def test_completion_dataset_masks_prompt_tokens(tmp_path: Path) -> None:
+    path = tmp_path / "code.jsonl"
+    path.write_text(json.dumps({"prompt": "abcde", "completion": "fghijkl"}) + "\n", encoding="utf-8")
+
+    dataset = JsonlCodeIterableDataset(path, block_size=5, tokenizer=CodeTokenizer(), completion_only=True)
+    blocks = list(dataset)
+
+    assert blocks
+    assert any(-100 in block[2] for block in blocks)
+    assert any(1 in block[2] for block in blocks)
 
 
 def test_torch_decoder_config_validates_attention_shape() -> None:

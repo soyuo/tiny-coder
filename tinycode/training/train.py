@@ -23,9 +23,13 @@ class TrainConfig:
     checkpoint_interval: int | None = 500
 
 
-def _collate_blocks(batch: list[tuple[list[int], list[int]]], torch: Any) -> tuple[Any, Any]:
-    inputs, targets = zip(*batch)
-    return torch.tensor(list(inputs), dtype=torch.long), torch.tensor(list(targets), dtype=torch.long)
+def _collate_blocks(batch: list[tuple[list[int], ...]], torch: Any) -> tuple[Any, ...]:
+    inputs = [item[0] for item in batch]
+    targets = [item[1] for item in batch]
+    result = [torch.tensor(list(inputs), dtype=torch.long), torch.tensor(list(targets), dtype=torch.long)]
+    if len(batch[0]) == 3:
+        result.append(torch.tensor([item[2] for item in batch], dtype=torch.long))
+    return tuple(result)
 
 
 def _evaluate(model: Any, dataset: JsonlCodeIterableDataset, batch_size: int, device: str, torch: Any) -> float:
@@ -40,9 +44,14 @@ def _evaluate(model: Any, dataset: JsonlCodeIterableDataset, batch_size: int, de
     count = 0
     model.eval()
     with torch.no_grad():
-        for inputs, targets in loader:
+        for batch in loader:
+            inputs, targets = batch[:2]
+            masks = batch[2] if len(batch) == 3 else None
             logits = model(inputs.to(device))
-            loss = loss_fn(logits.reshape(-1, logits.shape[-1]), targets.to(device).reshape(-1))
+            labels = targets.to(device)
+            if masks is not None:
+                labels = labels.masked_fill(masks.to(device) == -100, -100)
+            loss = loss_fn(logits.reshape(-1, logits.shape[-1]), labels.reshape(-1))
             total += float(loss.cpu())
             count += 1
     model.train()
@@ -61,7 +70,8 @@ def train_jsonl(
     if config.batch_size < 1 or config.epochs < 1 or config.learning_rate <= 0 or (config.max_steps is not None and config.max_steps < 1) or (config.checkpoint_interval is not None and config.checkpoint_interval < 1):
         raise ValueError("training parameters must be positive")
     tokenizer = CodeTokenizer() if config.model.vocab_size == CodeTokenizer.vocab_size else None
-    dataset = JsonlCodeIterableDataset(path, config.model.max_sequence_length, tokenizer)
+    completion_only = tokenizer is not None
+    dataset = JsonlCodeIterableDataset(path, config.model.max_sequence_length, tokenizer, completion_only)
     model = TinyCodeDecoder(config.model).to(config.device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
     if resume_checkpoint is not None:
@@ -96,11 +106,14 @@ def train_jsonl(
     model.train()
     losses: list[float] = []
     for _ in range(config.epochs):
-        for inputs, targets in loader:
+        for batch in loader:
+            inputs, targets = batch[:2]
             inputs = inputs.to(config.device)
             targets = targets.to(config.device)
             optimizer.zero_grad(set_to_none=True)
             logits = model(inputs)
+            if len(batch) == 3:
+                targets = targets.masked_fill(batch[2].to(config.device) == -100, -100)
             loss = loss_fn(logits.reshape(-1, config.model.vocab_size), targets.reshape(-1))
             loss.backward()
             optimizer.step()
@@ -113,7 +126,7 @@ def train_jsonl(
             break
     validation_loss = None
     if validation_path is not None:
-        validation = JsonlCodeIterableDataset(validation_path, config.model.max_sequence_length, tokenizer)
+        validation = JsonlCodeIterableDataset(validation_path, config.model.max_sequence_length, tokenizer, completion_only)
         validation_loss = _evaluate(model, validation, config.batch_size, config.device, torch)
     checkpoint = output / "checkpoint.pt"
     save_checkpoint(losses[-1])
