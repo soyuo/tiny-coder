@@ -118,6 +118,26 @@ def test_train_jsonl_limits_steps(tmp_path: Path) -> None:
     assert result["steps"] == 2
 
 
+def test_train_jsonl_writes_intermediate_checkpoint(tmp_path: Path) -> None:
+    pytest.importorskip("torch")
+    from tinycode.training import TrainConfig, TorchDecoderConfig, train_jsonl
+
+    data = tmp_path / "data.jsonl"
+    output = tmp_path / "out"
+    data.write_text('{"text":"def add(a, b): return a + b;"}\n', encoding="utf-8")
+    config = TrainConfig(
+        model=TorchDecoderConfig(hidden_size=16, intermediate_size=32, num_layers=1, num_heads=2, max_sequence_length=8),
+        batch_size=1,
+        epochs=1,
+        checkpoint_interval=1,
+    )
+
+    result = train_jsonl(data, output, config)
+
+    assert result["checkpoint"] == str(output / "checkpoint.pt")
+    assert (output / "checkpoint.pt").exists()
+
+
 def test_train_jsonl_resumes_from_checkpoint(tmp_path: Path) -> None:
     pytest.importorskip("torch")
     from tinycode.training import TrainConfig, TorchDecoderConfig, train_jsonl

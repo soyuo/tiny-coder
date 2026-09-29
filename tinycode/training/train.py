@@ -19,6 +19,7 @@ class TrainConfig:
     learning_rate: float = 3e-4
     device: str = "cpu"
     max_steps: int | None = None
+    checkpoint_interval: int | None = 500
 
 
 def _collate_blocks(batch: list[tuple[list[int], list[int]]], torch: Any) -> tuple[Any, Any]:
@@ -56,7 +57,7 @@ def train_jsonl(
 ) -> dict[str, Any]:
     torch, _ = _torch()
     config = config or TrainConfig()
-    if config.batch_size < 1 or config.epochs < 1 or config.learning_rate <= 0 or (config.max_steps is not None and config.max_steps < 1):
+    if config.batch_size < 1 or config.epochs < 1 or config.learning_rate <= 0 or (config.max_steps is not None and config.max_steps < 1) or (config.checkpoint_interval is not None and config.checkpoint_interval < 1):
         raise ValueError("training parameters must be positive")
     dataset = JsonlCodeIterableDataset(path, config.model.max_sequence_length)
     model = TinyCodeDecoder(config.model).to(config.device)
@@ -75,6 +76,21 @@ def train_jsonl(
         shuffle=False,
         collate_fn=lambda batch: _collate_blocks(batch, torch),
     )
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+
+    def save_checkpoint(loss_value: float) -> None:
+        torch.save(
+            {
+                "model": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "config": config.model.to_dict(),
+                "loss": loss_value,
+                "validation_loss": None,
+            },
+            output / "checkpoint.pt",
+        )
+
     model.train()
     losses: list[float] = []
     for _ in range(config.epochs):
@@ -87,6 +103,8 @@ def train_jsonl(
             loss.backward()
             optimizer.step()
             losses.append(float(loss.detach().cpu()))
+            if config.checkpoint_interval and len(losses) % config.checkpoint_interval == 0:
+                save_checkpoint(losses[-1])
             if config.max_steps is not None and len(losses) >= config.max_steps:
                 break
         if config.max_steps is not None and len(losses) >= config.max_steps:
@@ -95,19 +113,11 @@ def train_jsonl(
     if validation_path is not None:
         validation = JsonlCodeIterableDataset(validation_path, config.model.max_sequence_length)
         validation_loss = _evaluate(model, validation, config.batch_size, config.device, torch)
-    output = Path(output_dir)
-    output.mkdir(parents=True, exist_ok=True)
     checkpoint = output / "checkpoint.pt"
-    torch.save(
-        {
-            "model": model.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "config": config.model.to_dict(),
-            "loss": losses[-1],
-            "validation_loss": validation_loss,
-        },
-        checkpoint,
-    )
+    save_checkpoint(losses[-1])
+    payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    payload["validation_loss"] = validation_loss
+    torch.save(payload, checkpoint)
     (output / "training.json").write_text(
         json.dumps({"config": asdict(config), "steps": len(losses), "loss": losses[-1], "validation_loss": validation_loss}, default=lambda value: asdict(value)),
         encoding="utf-8",
