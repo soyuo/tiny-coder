@@ -6,7 +6,7 @@ from .memory import MemoryLimitError, MemoryPlan, RuntimeMemoryUsage, collect_me
 from .tensor_format import TensorFormatError, TensorHeader, pack_header, read_header
 from .tensor import TensorView
 from .ops import matmul
-from .tokenizer import ByteTokenizer, TokenizationError
+from .tokenizer import ByteTokenizer, CodeTokenizer, TokenizationError
 from .attention import scaled_dot_product_attention
 from .model import DecoderBlock, DecoderConfig, DecoderKVCache, DecoderOnlyTransformer, DiskDecoderOnlyTransformer, RMSNorm
 from .packed_format import PackedLayer, PackedTensor, pack_tensors, read_packed_layer
@@ -31,6 +31,7 @@ __all__ = [
     "TensorHeader",
     "TensorView",
     "ByteTokenizer",
+    "CodeTokenizer",
     "TokenizationError",
     "scaled_dot_product_attention",
     "DecoderBlock",

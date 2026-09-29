@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 import json
 
+from ..runtime.tokenizer import CodeTokenizer
 from .dataset import JsonlCodeIterableDataset
 from .model import TinyCodeDecoder, TorchDecoderConfig, _torch
 
@@ -59,7 +60,8 @@ def train_jsonl(
     config = config or TrainConfig()
     if config.batch_size < 1 or config.epochs < 1 or config.learning_rate <= 0 or (config.max_steps is not None and config.max_steps < 1) or (config.checkpoint_interval is not None and config.checkpoint_interval < 1):
         raise ValueError("training parameters must be positive")
-    dataset = JsonlCodeIterableDataset(path, config.model.max_sequence_length)
+    tokenizer = CodeTokenizer() if config.model.vocab_size == CodeTokenizer.vocab_size else None
+    dataset = JsonlCodeIterableDataset(path, config.model.max_sequence_length, tokenizer)
     model = TinyCodeDecoder(config.model).to(config.device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate)
     if resume_checkpoint is not None:
@@ -111,7 +113,7 @@ def train_jsonl(
             break
     validation_loss = None
     if validation_path is not None:
-        validation = JsonlCodeIterableDataset(validation_path, config.model.max_sequence_length)
+        validation = JsonlCodeIterableDataset(validation_path, config.model.max_sequence_length, tokenizer)
         validation_loss = _evaluate(model, validation, config.batch_size, config.device, torch)
     checkpoint = output / "checkpoint.pt"
     save_checkpoint(losses[-1])

@@ -27,3 +27,38 @@ class ByteTokenizer:
         if any(not isinstance(token, int) or not 0 <= token < self.vocab_size for token in token_ids):
             raise TokenizationError("token ID must be an integer from 0 to 255")
         return bytes(token_ids).decode("utf-8")
+
+
+class CodeTokenizer(ByteTokenizer):
+    """Byte tokenizer with code-training control tokens."""
+
+    BOS = 256
+    EOS = 257
+    SEP = 258
+    PAD = 259
+    vocab_size = 260
+
+    def validate_vocab_size(self, vocab_size: int) -> None:
+        if vocab_size != self.vocab_size:
+            raise TokenizationError(f"code tokenizer requires vocab size {self.vocab_size}")
+
+    def encode(self, text: str, *, bos: bool = False, eos: bool = False) -> list[int]:
+        tokens = super().encode(text)
+        if bos:
+            tokens.insert(0, self.BOS)
+        if eos:
+            tokens.append(self.EOS)
+        return tokens
+
+    def encode_record(self, record: dict[str, object]) -> list[int]:
+        prompt = record.get("prompt")
+        completion = record.get("completion")
+        if isinstance(prompt, str) and isinstance(completion, str):
+            return [self.BOS, *super().encode(prompt), self.SEP, *super().encode(completion), self.EOS]
+        text = record.get("text")
+        if not isinstance(text, str):
+            raise TokenizationError("record must contain text or prompt/completion")
+        return self.encode(text, bos=True, eos=True)
+
+    def decode(self, token_ids: list[int]) -> str:
+        return super().decode([token for token in token_ids if token < 256])

@@ -11,7 +11,7 @@ from tinycode.runtime.manifest import ManifestError, ModelManifest
 from tinycode.runtime.memory import MemoryLimitError, collect_memory_usage, parse_memory_limit, plan_memory
 from tinycode.runtime.tensor_format import TensorFormatError, pack_header, read_header
 from tinycode.runtime.ops import matmul
-from tinycode.runtime.tokenizer import ByteTokenizer, TokenizationError
+from tinycode.runtime.tokenizer import ByteTokenizer, CodeTokenizer, TokenizationError
 from tinycode.runtime.attention import scaled_dot_product_attention
 from tinycode.runtime.model import DecoderBlock, DecoderConfig, DecoderOnlyTransformer, DiskDecoderOnlyTransformer, _load_block_weights
 from tinycode.runtime.packed_format import pack_tensors
@@ -702,3 +702,13 @@ def test_byte_tokenizer_validates_model_vocabulary() -> None:
     tokenizer.validate_vocab_size(256)
     with pytest.raises(TokenizationError):
         tokenizer.validate_vocab_size(128)
+
+
+def test_code_tokenizer_round_trip_and_special_tokens() -> None:
+    tokenizer = CodeTokenizer()
+    tokens = tokenizer.encode_record({"prompt": "def add():", "completion": "\n    return 1"})
+
+    assert tokens[0] == tokenizer.BOS
+    assert tokenizer.SEP in tokens
+    assert tokens[-1] == tokenizer.EOS
+    assert "def add" in tokenizer.decode(tokens)

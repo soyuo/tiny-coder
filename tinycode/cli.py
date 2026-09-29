@@ -12,8 +12,8 @@ from .runtime.kv_cache import KVCacheStore
 from .runtime.manifest import ModelManifest, ManifestError
 from .runtime.memory import MemoryLimitError, parse_memory_limit, plan_memory
 from .runtime.model import DiskDecoderOnlyTransformer
-from .runtime.tokenizer import ByteTokenizer, TokenizationError
-from .training import TorchDecoderConfig, TrainConfig, build_corpus, export_checkpoint, train_jsonl
+from .runtime.tokenizer import ByteTokenizer, CodeTokenizer, TokenizationError
+from .training import TorchDecoderConfig, TrainConfig, build_corpus, export_checkpoint, format_corpus, train_jsonl
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -39,6 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.add_argument("--intermediate-size", type=int, default=768)
     train.add_argument("--layers", type=int, default=4)
     train.add_argument("--heads", type=int, default=8)
+    train.add_argument("--vocab-size", type=int, default=CodeTokenizer.vocab_size)
     train.add_argument("--device", default="cpu")
     train.add_argument("--max-steps", type=int)
     train.add_argument("--checkpoint-interval", type=int, default=500)
@@ -52,6 +53,12 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--output", type=Path, required=True)
     prepare.add_argument("--validation-ratio", type=float, default=0.1)
     prepare.add_argument("--max-file-bytes", type=int, default=262_144)
+    prepare.add_argument("--completion", action="store_true")
+    prepare.add_argument("--instruction", action="store_true")
+    format_data = commands.add_parser("format-data")
+    format_data.add_argument("--source", type=Path, required=True)
+    format_data.add_argument("--output", type=Path, required=True)
+    format_data.add_argument("--no-instruction", action="store_true")
     benchmark = commands.add_parser("benchmark")
     benchmark.add_argument("--model", type=Path, required=True)
     benchmark.add_argument("--prompt", required=True)
@@ -78,6 +85,8 @@ def main(argv: list[str] | None = None) -> int:
         return export_command(args)
     if args.command == "prepare-data":
         return prepare_data_command(args)
+    if args.command == "format-data":
+        return format_data_command(args)
     if args.command == "benchmark":
         return benchmark_command(args)
     return 2
@@ -92,6 +101,7 @@ def train_command(args: argparse.Namespace) -> int:
                 num_layers=args.layers,
                 num_heads=args.heads,
                 max_sequence_length=args.block_size,
+                vocab_size=args.vocab_size,
             ),
             batch_size=args.batch_size,
             epochs=args.epochs,
@@ -135,6 +145,8 @@ def prepare_data_command(args: argparse.Namespace) -> int:
             args.output,
             validation_ratio=args.validation_ratio,
             max_file_bytes=args.max_file_bytes,
+            completion=args.completion,
+            instruction=args.instruction,
         )
     except (OSError, ValueError) as exc:
         print(f"error: {exc}")
@@ -142,6 +154,19 @@ def prepare_data_command(args: argparse.Namespace) -> int:
     print(f"train files: {result['train_files']}")
     print(f"validation files: {result['validation_files']}")
     print(f"bytes: {result['bytes']}")
+    print(f"output: {args.output}")
+    return 0
+
+
+def format_data_command(args: argparse.Namespace) -> int:
+    try:
+        result = format_corpus(args.source, args.output, instruction=not args.no_instruction)
+    except (OSError, ValueError) as exc:
+        print(f"error: {exc}")
+        return 2
+    print(f"train files: {result['train_files']}")
+    print(f"validation files: {result['validation_files']}")
+    print(f"duplicates: {result['skipped_duplicate']}")
     print(f"output: {args.output}")
     return 0
 
@@ -210,7 +235,7 @@ def run_command(args: argparse.Namespace) -> int:
     if args.kv_cache_dir is None:
         args.kv_cache_dir = args.model / "kv_cache"
     try:
-        tokenizer = ByteTokenizer()
+        tokenizer = CodeTokenizer() if manifest.vocab_size == CodeTokenizer.vocab_size else ByteTokenizer()
         with DiskDecoderOnlyTransformer.from_model_dir(
             args.model,
             layer_cache=args.layer_cache,

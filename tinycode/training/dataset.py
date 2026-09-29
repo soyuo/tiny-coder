@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Iterator
 
-from ..runtime.tokenizer import ByteTokenizer
+from ..runtime.tokenizer import ByteTokenizer, CodeTokenizer
 
 try:
     import torch
@@ -17,7 +17,7 @@ except ImportError:
         pass
 
 
-def iter_jsonl_blocks(path: str | Path, block_size: int, tokenizer: ByteTokenizer) -> Iterator[tuple[list[int], list[int]]]:
+def iter_jsonl_blocks(path: str | Path, block_size: int, tokenizer: ByteTokenizer | CodeTokenizer) -> Iterator[tuple[list[int], list[int]]]:
     tokens: list[int] = []
     width = block_size + 1
     with Path(path).open(encoding="utf-8") as stream:
@@ -28,10 +28,16 @@ def iter_jsonl_blocks(path: str | Path, block_size: int, tokenizer: ByteTokenize
                 record = json.loads(line)
             except json.JSONDecodeError as exc:
                 raise ValueError(f"invalid JSON on line {line_number}") from exc
-            text = record.get("text")
-            if not isinstance(text, str):
-                raise ValueError(f"line {line_number} must contain a string text field")
-            tokens.extend(tokenizer.encode(text))
+            if isinstance(tokenizer, CodeTokenizer):
+                try:
+                    tokens.extend(tokenizer.encode_record(record))
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(f"line {line_number} must contain valid code fields") from exc
+            else:
+                text = record.get("text")
+                if not isinstance(text, str):
+                    raise ValueError(f"line {line_number} must contain a string text field")
+                tokens.extend(tokenizer.encode(text))
             while len(tokens) >= width:
                 window = tokens[:width]
                 del tokens[:block_size]
@@ -64,7 +70,7 @@ class JsonlCodeDataset:
 class JsonlCodeIterableDataset(_IterableDataset):
     """Stream JSONL blocks without retaining the corpus in memory."""
 
-    def __init__(self, path: str | Path, block_size: int, tokenizer: ByteTokenizer | None = None) -> None:
+    def __init__(self, path: str | Path, block_size: int, tokenizer: ByteTokenizer | CodeTokenizer | None = None) -> None:
         if block_size < 2:
             raise ValueError("block_size must be at least 2")
         self.path = Path(path)
