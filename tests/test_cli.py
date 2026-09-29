@@ -126,6 +126,15 @@ def test_train_command_writes_checkpoint(tmp_path: Path, capsys) -> None:
     assert "steps:" in capsys.readouterr().out
 
 
+def test_prepare_instruction_data_command(tmp_path: Path, capsys) -> None:
+    source = tmp_path / "data.jsonl"
+    source.write_text('{"instruction":"질문","output":"답변"}\n', encoding="utf-8")
+
+    assert main(["prepare-instruction-data", "--source", str(source), "--output", str(tmp_path / "out"), "--validation-ratio", "0"]) == 0
+
+    assert "records: 1" in capsys.readouterr().out
+
+
 def test_train_command_resumes_checkpoint(tmp_path: Path, capsys) -> None:
     pytest.importorskip("torch")
     data = tmp_path / "data.jsonl"

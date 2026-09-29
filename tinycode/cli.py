@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 
 from .benchmark import BenchmarkConfig, benchmark_json
+from .evaluation import evaluate_komt
 from .runtime.generation import generate_greedy_cached_with_cache
 from .runtime.context import RepositoryContext
 from .runtime.kv_cache import KVCacheStore
@@ -13,7 +14,7 @@ from .runtime.manifest import ModelManifest, ManifestError
 from .runtime.memory import MemoryLimitError, parse_memory_limit, plan_memory
 from .runtime.model import DiskDecoderOnlyTransformer
 from .runtime.tokenizer import ByteTokenizer, CodeTokenizer, TokenizationError
-from .training import TorchDecoderConfig, TrainConfig, build_corpus, export_checkpoint, format_corpus, train_jsonl
+from .training import TorchDecoderConfig, TrainConfig, build_corpus, export_checkpoint, format_corpus, prepare_instruction_data, train_jsonl
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -59,6 +60,16 @@ def build_parser() -> argparse.ArgumentParser:
     format_data.add_argument("--source", type=Path, required=True)
     format_data.add_argument("--output", type=Path, required=True)
     format_data.add_argument("--no-instruction", action="store_true")
+    instruction = commands.add_parser("prepare-instruction-data")
+    instruction.add_argument("--source", required=True)
+    instruction.add_argument("--output", type=Path, required=True)
+    instruction.add_argument("--validation-ratio", type=float, default=0.1)
+    evaluate = commands.add_parser("evaluate-komt")
+    evaluate.add_argument("--model", type=Path, required=True)
+    evaluate.add_argument("--dataset", required=True)
+    evaluate.add_argument("--output", type=Path, required=True)
+    evaluate.add_argument("--memory-limit", default="1G")
+    evaluate.add_argument("--max-new-tokens", type=int, default=64)
     benchmark = commands.add_parser("benchmark")
     benchmark.add_argument("--model", type=Path, required=True)
     benchmark.add_argument("--prompt", required=True)
@@ -87,6 +98,10 @@ def main(argv: list[str] | None = None) -> int:
         return prepare_data_command(args)
     if args.command == "format-data":
         return format_data_command(args)
+    if args.command == "prepare-instruction-data":
+        return prepare_instruction_data_command(args)
+    if args.command == "evaluate-komt":
+        return evaluate_komt_command(args)
     if args.command == "benchmark":
         return benchmark_command(args)
     return 2
@@ -168,6 +183,39 @@ def format_data_command(args: argparse.Namespace) -> int:
     print(f"validation files: {result['validation_files']}")
     print(f"duplicates: {result['skipped_duplicate']}")
     print(f"output: {args.output}")
+    return 0
+
+
+def prepare_instruction_data_command(args: argparse.Namespace) -> int:
+    try:
+        result = prepare_instruction_data(args.source, args.output, validation_ratio=args.validation_ratio)
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"error: {exc}")
+        return 2
+    print(f"records: {result['records']}")
+    print(f"train records: {result['train_records']}")
+    print(f"validation records: {result['validation_records']}")
+    print(f"output: {args.output}")
+    return 0
+
+
+def evaluate_komt_command(args: argparse.Namespace) -> int:
+    try:
+        result = evaluate_komt(
+            args.model,
+            args.dataset,
+            args.output,
+            memory_limit=args.memory_limit,
+            max_new_tokens=args.max_new_tokens,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(f"error: {exc}")
+        return 2
+    print(f"cases: {result['cases']}")
+    print(f"references: {result['references']}")
+    print(f"diagnostic exact matches: {result['diagnostic_exact_matches']}")
+    print(f"diagnostic exact match rate: {result['diagnostic_exact_match_rate']}")
+    print(f"output: {result['output']}")
     return 0
 
 

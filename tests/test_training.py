@@ -6,6 +6,7 @@ import pytest
 from tinycode.runtime.tokenizer import CodeTokenizer
 from tinycode.training.dataset import JsonlCodeDataset, JsonlCodeIterableDataset
 from tinycode.training.corpus import build_corpus
+from tinycode.training.instruction import komt_conversations, prepare_instruction_data
 from tinycode.training.model import TorchDecoderConfig
 from tinycode.training.train import _collate_blocks
 
@@ -133,6 +134,39 @@ def test_format_corpus_uses_multiple_instruction_templates(tmp_path: Path) -> No
 
     assert result["instruction_templates"] == 10
     assert len(prompts) > 1
+
+
+def test_prepare_instruction_data_normalizes_alpaca_records(tmp_path: Path) -> None:
+    source = tmp_path / "kullm.jsonl"
+    source.write_text(
+        json.dumps({"instruction": "한국어로 답하세요.", "input": "질문", "output": "답변"}, ensure_ascii=False) + "\n"
+        + json.dumps({"instruction": "비어 있음", "input": "", "output": ""}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    result = prepare_instruction_data(source, tmp_path / "instruction", validation_ratio=0)
+
+    assert result["records"] == 1
+    record = json.loads((tmp_path / "instruction" / "train.jsonl").read_text(encoding="utf-8"))
+    assert record == {"prompt": "한국어로 답하세요.\n\n입력:\n질문", "completion": "답변"}
+
+
+def test_prepare_instruction_data_rejects_overlapping_paths(tmp_path: Path) -> None:
+    source = tmp_path / "data.jsonl"
+    source.write_text('{"instruction":"질문","output":"답변"}\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="different"):
+        prepare_instruction_data(source, source)
+
+
+def test_komt_conversations_preserves_turns(tmp_path: Path) -> None:
+    source = tmp_path / "komt.jsonl"
+    source.write_text(json.dumps({"question_id": 1, "category": "coding", "turns": ["첫 질문", "두 번째 질문"], "reference": ["첫 답"]}) + "\n", encoding="utf-8")
+
+    conversations = list(komt_conversations(source))
+
+    assert conversations[0]["turns"] == ["첫 질문", "두 번째 질문"]
+    assert conversations[0]["references"] == ["첫 답"]
 
 
 def test_train_jsonl_records_validation_loss(tmp_path: Path) -> None:
