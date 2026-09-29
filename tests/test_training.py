@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 import pytest
 
@@ -81,6 +82,22 @@ def test_build_corpus_filters_files_and_splits_repositories(tmp_path: Path) -> N
     assert result["train_files"] == 1
     assert result["validation_files"] == 0
     assert "print('ok')" in (tmp_path / "dataset" / "train.jsonl").read_text(encoding="utf-8")
+
+
+def test_build_corpus_deduplicates_and_builds_completion_records(tmp_path: Path) -> None:
+    source = tmp_path / "repos"
+    repo = source / "org--repo"
+    repo.mkdir(parents=True)
+    content = "def add(a, b):\n    return a + b\n"
+    (repo / "a.py").write_text(content, encoding="utf-8")
+    (repo / "b.py").write_text(content, encoding="utf-8")
+
+    result = build_corpus(source, tmp_path / "dataset", validation_ratio=0, completion=True, instruction=True)
+    record = json.loads((tmp_path / "dataset" / "train.jsonl").read_text(encoding="utf-8"))
+
+    assert result["skipped_duplicate"] == 1
+    assert record["prompt"].startswith("Complete the following code.")
+    assert record["completion"]
 
 
 def test_train_jsonl_records_validation_loss(tmp_path: Path) -> None:
