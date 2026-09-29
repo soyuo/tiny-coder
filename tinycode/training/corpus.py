@@ -21,6 +21,18 @@ IGNORED_DIRS = {
     "bin", "build", "coverage", "dist", "node_modules", "obj", "out", "target", "vendor", "venv",
 }
 GENERATED_MARKERS = ("generated", ".generated.", ".min.", ".map")
+INSTRUCTION_TEMPLATES = (
+    "Complete the following code.",
+    "Finish the missing implementation in this code.",
+    "Continue this source file with correct code.",
+    "Implement the next part of this function.",
+    "Write the code that should come after this snippet.",
+    "Complete this code while preserving its existing style.",
+    "Infer the intended behavior and finish the implementation.",
+    "Add the missing code for this module.",
+    "Continue the program with a consistent implementation.",
+    "Generate the remaining code for this snippet.",
+)
 SECRET_SUFFIXES = {".key", ".pem", ".p12", ".pfx"}
 
 
@@ -163,7 +175,8 @@ def format_corpus(source_dir: str | Path, output_dir: str | Path, *, instruction
                 split_at = max(1, min(len(text) - 1, int(len(text) * 0.6)))
                 prompt = text[:split_at]
                 if instruction:
-                    prompt = f"Complete the following code.\n\n{prompt}"
+                    template_index = int(digest[:8], 16) % len(INSTRUCTION_TEMPLATES)
+                    prompt = f"{INSTRUCTION_TEMPLATES[template_index]}\n\n{prompt}"
                 output_file.write(json.dumps({"prompt": prompt, "completion": text[split_at:], "source": record.get("source", "")}, ensure_ascii=False) + "\n")
                 stats.files += 1
                 stats.completion_records += 1
@@ -171,6 +184,12 @@ def format_corpus(source_dir: str | Path, output_dir: str | Path, *, instruction
                     stats.train_files += 1
                 else:
                     stats.validation_files += 1
-    manifest = {**asdict(stats), "source_dir": str(source), "format": "prompt-completion", "instruction": instruction}
+    manifest = {
+        **asdict(stats),
+        "source_dir": str(source),
+        "format": "prompt-completion",
+        "instruction": instruction,
+        "instruction_templates": len(INSTRUCTION_TEMPLATES) if instruction else 0,
+    }
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return manifest

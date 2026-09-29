@@ -100,6 +100,28 @@ def test_build_corpus_deduplicates_and_builds_completion_records(tmp_path: Path)
     assert record["completion"]
 
 
+def test_format_corpus_uses_multiple_instruction_templates(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    records = [
+        json.dumps({"text": f"def function_{index}():\n    return {index}", "source": str(index)})
+        for index in range(20)
+    ]
+    (source / "train.jsonl").write_text("\n".join(records) + "\n", encoding="utf-8")
+    (source / "validation.jsonl").write_text("", encoding="utf-8")
+
+    from tinycode.training.corpus import format_corpus
+
+    result = format_corpus(source, tmp_path / "output")
+    prompts = {
+        json.loads(line)["prompt"].split("\n", 1)[0]
+        for line in (tmp_path / "output" / "train.jsonl").read_text(encoding="utf-8").splitlines()
+    }
+
+    assert result["instruction_templates"] == 10
+    assert len(prompts) > 1
+
+
 def test_train_jsonl_records_validation_loss(tmp_path: Path) -> None:
     pytest.importorskip("torch")
     from tinycode.training import TrainConfig, TorchDecoderConfig, train_jsonl
