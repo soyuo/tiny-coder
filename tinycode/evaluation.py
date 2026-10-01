@@ -60,10 +60,11 @@ def evaluate_komt(
             turns: list[dict[str, str]] = []
             for index, turn in enumerate(conversation["turns"]):
                 prompt = "\n\n".join(history + [f"사용자: {turn}", "TinyCode:"])
-                token_ids = tokenizer.encode(prompt)
+                token_ids = tokenizer.encode_prompt(prompt) if isinstance(tokenizer, CodeTokenizer) else tokenizer.encode(prompt)
                 cache_dir = Path(cache_root) / f"{len(results)}-{index}"
                 cache = model.new_cache(KVCacheStore(cache_dir, hot_bytes=plan.kv_bytes))
-                generated = generate_greedy_cached_with_cache(model, token_ids, max_new_tokens, cache)
+                eos_token_id = tokenizer.EOS if isinstance(tokenizer, CodeTokenizer) else None
+                generated = generate_greedy_cached_with_cache(model, token_ids, max_new_tokens, cache, eos_token_id)
                 completion = _decode_generated(tokenizer, generated[len(token_ids):])
                 reference = conversation["references"][index] if index < len(conversation["references"]) else ""
                 exact_match = bool(reference) and _normalise(completion) == _normalise(reference)

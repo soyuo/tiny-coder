@@ -712,3 +712,14 @@ def test_code_tokenizer_round_trip_and_special_tokens() -> None:
     assert tokenizer.SEP in tokens
     assert tokens[-1] == tokenizer.EOS
     assert "def add" in tokenizer.decode(tokens)
+
+
+def test_code_tokenizer_encodes_runtime_prompt() -> None:
+    tokenizer = CodeTokenizer()
+
+    tokens = tokenizer.encode_prompt("Language: python\n\ndef add():")
+
+    assert tokens[0] == tokenizer.BOS
+    assert tokens[-1] == tokenizer.SEP
+    assert "def add" in tokenizer.decode(tokens)
+    assert tokenizer.decode([0xEC]) == "�"

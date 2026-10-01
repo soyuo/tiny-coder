@@ -21,19 +21,32 @@ IGNORED_DIRS = {
     "bin", "build", "coverage", "dist", "node_modules", "obj", "out", "target", "vendor", "venv",
 }
 GENERATED_MARKERS = ("generated", ".generated.", ".min.", ".map")
-INSTRUCTION_TEMPLATES = (
-    "Complete the following code.",
-    "Finish the missing implementation in this code.",
-    "Continue this source file with correct code.",
-    "Implement the next part of this function.",
-    "Write the code that should come after this snippet.",
-    "Complete this code while preserving its existing style.",
-    "Infer the intended behavior and finish the implementation.",
-    "Add the missing code for this module.",
-    "Continue the program with a consistent implementation.",
-    "Generate the remaining code for this snippet.",
-)
 SECRET_SUFFIXES = {".key", ".pem", ".p12", ".pfx"}
+LANGUAGE_BY_SUFFIX = {
+    ".bash": "shell", ".c": "c", ".cc": "cpp", ".cpp": "cpp", ".cs": "csharp",
+    ".css": "css", ".dart": "dart", ".go": "go", ".graphql": "graphql",
+    ".h": "c", ".hpp": "cpp", ".html": "html", ".java": "java", ".js": "javascript",
+    ".jsx": "javascript-react", ".json": "json", ".kt": "kotlin", ".kts": "kotlin",
+    ".md": "markdown", ".php": "php", ".py": "python", ".rb": "ruby", ".rs": "rust",
+    ".s": "assembly", ".scala": "scala", ".scss": "scss", ".sh": "shell", ".sql": "sql",
+    ".swift": "swift", ".toml": "toml", ".ts": "typescript", ".tsx": "typescript-react",
+    ".vue": "vue", ".xml": "xml", ".yaml": "yaml", ".yml": "yaml",
+}
+
+
+def language_for_path(path: str | Path) -> str:
+    path = Path(path)
+    if path.name == "Dockerfile":
+        return "dockerfile"
+    if path.name in {"Gemfile", "Podfile"}:
+        return "ruby"
+    if path.name in {"Makefile", "CMakeLists.txt"}:
+        return "make"
+    return LANGUAGE_BY_SUFFIX.get(path.suffix.lower(), "unknown")
+
+
+def _completion_prompt(language: str, text: str) -> str:
+    return f"Language: {language}\n\n{text}"
 
 
 @dataclass
@@ -134,9 +147,7 @@ def build_corpus(
                 source_name = f"{repository.name}/{path.relative_to(repository).as_posix()}"
                 if completion:
                     split = max(1, min(len(text) - 1, int(len(text) * 0.6)))
-                    prompt, target = text[:split], text[split:]
-                    if instruction:
-                        prompt = f"Complete the following code.\n\n{prompt}"
+                    prompt, target = _completion_prompt(language_for_path(path), text[:split]), text[split:]
                     record = {"prompt": prompt, "completion": target, "source": source_name}
                     stats.completion_records += 1
                 else:
@@ -148,7 +159,13 @@ def build_corpus(
                     stats.validation_files += 1
                 else:
                     stats.train_files += 1
-    manifest = {**asdict(stats), "source_dir": str(source), "validation_ratio": validation_ratio, "max_file_bytes": max_file_bytes}
+    manifest = {
+        **asdict(stats),
+        "source_dir": str(source),
+        "validation_ratio": validation_ratio,
+        "max_file_bytes": max_file_bytes,
+        "language_tags": completion,
+    }
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return manifest
 
@@ -173,10 +190,8 @@ def format_corpus(source_dir: str | Path, output_dir: str | Path, *, instruction
                     continue
                 seen.add(digest)
                 split_at = max(1, min(len(text) - 1, int(len(text) * 0.6)))
-                prompt = text[:split_at]
-                if instruction:
-                    template_index = int(digest[:8], 16) % len(INSTRUCTION_TEMPLATES)
-                    prompt = f"{INSTRUCTION_TEMPLATES[template_index]}\n\n{prompt}"
+                source_name = str(record.get("source", ""))
+                prompt = _completion_prompt(language_for_path(source_name), text[:split_at])
                 output_file.write(json.dumps({"prompt": prompt, "completion": text[split_at:], "source": record.get("source", "")}, ensure_ascii=False) + "\n")
                 stats.files += 1
                 stats.completion_records += 1
@@ -188,8 +203,8 @@ def format_corpus(source_dir: str | Path, output_dir: str | Path, *, instruction
         **asdict(stats),
         "source_dir": str(source),
         "format": "prompt-completion",
-        "instruction": instruction,
-        "instruction_templates": len(INSTRUCTION_TEMPLATES) if instruction else 0,
+        "instruction": False,
+        "language_tags": True,
     }
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return manifest

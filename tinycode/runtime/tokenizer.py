@@ -50,6 +50,10 @@ class CodeTokenizer(ByteTokenizer):
             tokens.append(self.EOS)
         return tokens
 
+    def encode_prompt(self, text: str) -> list[int]:
+        """Encode a prompt with the control tokens used during training."""
+        return [self.BOS, *super().encode(text), self.SEP]
+
     def encode_record(self, record: dict[str, object]) -> list[int]:
         prompt = record.get("prompt")
         completion = record.get("completion")
@@ -61,4 +65,6 @@ class CodeTokenizer(ByteTokenizer):
         return self.encode(text, bos=True, eos=True)
 
     def decode(self, token_ids: list[int]) -> str:
-        return super().decode([token for token in token_ids if token < 256])
+        if any(not isinstance(token, int) or not 0 <= token < self.vocab_size for token in token_ids):
+            raise TokenizationError("token ID must be an integer from 0 to 259")
+        return bytes(token for token in token_ids if token < 256).decode("utf-8", errors="replace")

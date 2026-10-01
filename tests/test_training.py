@@ -5,7 +5,7 @@ import pytest
 
 from tinycode.runtime.tokenizer import CodeTokenizer
 from tinycode.training.dataset import JsonlCodeDataset, JsonlCodeIterableDataset
-from tinycode.training.corpus import build_corpus
+from tinycode.training.corpus import build_corpus, language_for_path
 from tinycode.training.instruction import komt_conversations, prepare_instruction_data
 from tinycode.training.model import TorchDecoderConfig
 from tinycode.training.train import _collate_blocks
@@ -98,6 +98,12 @@ def test_build_corpus_filters_files_and_splits_repositories(tmp_path: Path) -> N
     assert "print('ok')" in (tmp_path / "dataset" / "train.jsonl").read_text(encoding="utf-8")
 
 
+def test_language_for_path_covers_code_and_special_files() -> None:
+    assert language_for_path("main.py") == "python"
+    assert language_for_path("Gemfile") == "ruby"
+    assert language_for_path("Makefile") == "make"
+
+
 def test_build_corpus_deduplicates_and_builds_completion_records(tmp_path: Path) -> None:
     source = tmp_path / "repos"
     repo = source / "org--repo"
@@ -110,15 +116,16 @@ def test_build_corpus_deduplicates_and_builds_completion_records(tmp_path: Path)
     record = json.loads((tmp_path / "dataset" / "train.jsonl").read_text(encoding="utf-8"))
 
     assert result["skipped_duplicate"] == 1
-    assert record["prompt"].startswith("Complete the following code.")
+    assert record["prompt"].startswith("Language: python\n\n")
+    assert "Complete the following code." not in record["prompt"]
     assert record["completion"]
 
 
-def test_format_corpus_uses_multiple_instruction_templates(tmp_path: Path) -> None:
+def test_format_corpus_adds_language_tags_without_instructions(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()
     records = [
-        json.dumps({"text": f"def function_{index}():\n    return {index}", "source": str(index)})
+        json.dumps({"text": f"def function_{index}():\n    return {index}", "source": f"repo/file_{index}.py"})
         for index in range(20)
     ]
     (source / "train.jsonl").write_text("\n".join(records) + "\n", encoding="utf-8")
@@ -127,13 +134,11 @@ def test_format_corpus_uses_multiple_instruction_templates(tmp_path: Path) -> No
     from tinycode.training.corpus import format_corpus
 
     result = format_corpus(source, tmp_path / "output")
-    prompts = {
-        json.loads(line)["prompt"].split("\n", 1)[0]
-        for line in (tmp_path / "output" / "train.jsonl").read_text(encoding="utf-8").splitlines()
-    }
+    prompts = [json.loads(line)["prompt"] for line in (tmp_path / "output" / "train.jsonl").read_text(encoding="utf-8").splitlines()]
 
-    assert result["instruction_templates"] == 10
-    assert len(prompts) > 1
+    assert result["language_tags"] is True
+    assert all(prompt.startswith("Language: python\n\n") for prompt in prompts)
+    assert all("Complete the following code." not in prompt for prompt in prompts)
 
 
 def test_prepare_instruction_data_normalizes_alpaca_records(tmp_path: Path) -> None:

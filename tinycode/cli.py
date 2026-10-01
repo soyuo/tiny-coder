@@ -27,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--kv-cache", choices=("disk",), default="disk")
     run.add_argument("--kv-cache-dir", type=Path)
     run.add_argument("--prompt")
+    run.add_argument("--language")
     run.add_argument("--repository", type=Path)
     run.add_argument("--max-new-tokens", type=int, default=32)
     train = commands.add_parser("train")
@@ -55,11 +56,11 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--validation-ratio", type=float, default=0.1)
     prepare.add_argument("--max-file-bytes", type=int, default=262_144)
     prepare.add_argument("--completion", action="store_true")
-    prepare.add_argument("--instruction", action="store_true")
+    prepare.add_argument("--instruction", action="store_true", help="deprecated; language tags are used instead")
     format_data = commands.add_parser("format-data")
     format_data.add_argument("--source", type=Path, required=True)
     format_data.add_argument("--output", type=Path, required=True)
-    format_data.add_argument("--no-instruction", action="store_true")
+    format_data.add_argument("--no-instruction", action="store_true", help="deprecated; instructions are never added")
     instruction = commands.add_parser("prepare-instruction-data")
     instruction.add_argument("--source", required=True)
     instruction.add_argument("--output", type=Path, required=True)
@@ -73,6 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark = commands.add_parser("benchmark")
     benchmark.add_argument("--model", type=Path, required=True)
     benchmark.add_argument("--prompt", required=True)
+    benchmark.add_argument("--language")
     benchmark.add_argument("--memory-limit", default="1G")
     benchmark.add_argument("--layer-cache", type=int)
     benchmark.add_argument("--kv-cache", choices=("memory", "disk"), default="memory")
@@ -175,7 +177,7 @@ def prepare_data_command(args: argparse.Namespace) -> int:
 
 def format_data_command(args: argparse.Namespace) -> int:
     try:
-        result = format_corpus(args.source, args.output, instruction=not args.no_instruction)
+        result = format_corpus(args.source, args.output)
     except (OSError, ValueError) as exc:
         print(f"error: {exc}")
         return 2
@@ -224,6 +226,7 @@ def benchmark_command(args: argparse.Namespace) -> int:
         print(benchmark_json(BenchmarkConfig(
             model_dir=args.model,
             prompt=args.prompt,
+            language=args.language,
             memory_limit=args.memory_limit,
             layer_cache=args.layer_cache,
             kv_cache=args.kv_cache,
@@ -293,6 +296,8 @@ def run_command(args: argparse.Namespace) -> int:
             tokenizer.validate_vocab_size(model.config.vocab_size)
             store = KVCacheStore(args.kv_cache_dir, hot_bytes=kv_budget)
             prompt = args.prompt
+            if args.language:
+                prompt = f"Language: {args.language}\n\n{prompt}"
             if args.repository is not None:
                 files = RepositoryContext(args.repository, max_bytes=context_budget).search(prompt)
                 context = "\n\n".join(f"[{item.path}]\n{item.text}" for item in files)
@@ -300,9 +305,10 @@ def run_command(args: argparse.Namespace) -> int:
                     prompt = f"{prompt}\n\nRelevant repository context:\n{context}"
                 print(f"context files: {len(files)}")
             cache = model.new_cache(store)
-            token_ids = tokenizer.encode(prompt)
-            result = generate_greedy_cached_with_cache(model, token_ids, args.max_new_tokens, cache)
-        print(tokenizer.decode(result))
+            token_ids = tokenizer.encode_prompt(prompt) if isinstance(tokenizer, CodeTokenizer) else tokenizer.encode(prompt)
+            eos_token_id = tokenizer.EOS if isinstance(tokenizer, CodeTokenizer) else None
+            result = generate_greedy_cached_with_cache(model, token_ids, args.max_new_tokens, cache, eos_token_id)
+        print(tokenizer.decode(result[len(token_ids):]))
     except (OSError, RuntimeError, TokenizationError, ValueError) as exc:
         print(f"error: {exc}")
         return 2

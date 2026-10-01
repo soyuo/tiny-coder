@@ -87,5 +87,9 @@ def _generate_with_cache(
 def generate_text(model: Any, tokenizer: Any, prompt: str, max_new_tokens: int, eos_token_id: int | None = None) -> str:
     """Generate text after validating tokenizer vocabulary compatibility."""
     tokenizer.validate_vocab_size(model.config.vocab_size)
-    token_ids = tokenizer.encode(prompt)
-    return tokenizer.decode(generate_greedy(model, token_ids, max_new_tokens, eos_token_id))
+    encode_prompt = getattr(tokenizer, "encode_prompt", tokenizer.encode)
+    token_ids = encode_prompt(prompt)
+    if eos_token_id is None:
+        eos_token_id = getattr(tokenizer, "EOS", None)
+    generated = generate_greedy(model, token_ids, max_new_tokens, eos_token_id)
+    return tokenizer.decode(generated[len(token_ids):])

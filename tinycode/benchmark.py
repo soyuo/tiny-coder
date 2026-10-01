@@ -16,13 +16,14 @@ from .runtime.kv_cache import KVCacheStore
 from .runtime.manifest import ModelManifest
 from .runtime.memory import parse_memory_limit, plan_memory
 from .runtime.model import DiskDecoderOnlyTransformer
-from .runtime.tokenizer import ByteTokenizer
+from .runtime.tokenizer import ByteTokenizer, CodeTokenizer
 
 
 @dataclass(frozen=True)
 class BenchmarkConfig:
     model_dir: Path
     prompt: str
+    language: str | None = None
     memory_limit: str = "1G"
     layer_cache: int | None = None
     kv_cache: str = "memory"
@@ -77,9 +78,12 @@ def run_benchmark(config: BenchmarkConfig) -> dict[str, Any]:
     if layer_cache < 1:
         raise ValueError("layer cache must be at least 1")
     prefetch = plan.prefetch if config.prefetch is None else config.prefetch
-    tokenizer = ByteTokenizer()
+    tokenizer = CodeTokenizer() if manifest.vocab_size == CodeTokenizer.vocab_size else ByteTokenizer()
     tokenizer.validate_vocab_size(manifest.vocab_size)
-    token_ids = tokenizer.encode(config.prompt)
+    prompt = config.prompt
+    if config.language:
+        prompt = f"Language: {config.language}\n\n{prompt}"
+    token_ids = tokenizer.encode_prompt(prompt) if isinstance(tokenizer, CodeTokenizer) else tokenizer.encode(prompt)
     rss_before = current_rss_bytes()
     durations: list[float] = []
     peak_weight_bytes = 0
@@ -98,7 +102,8 @@ def run_benchmark(config: BenchmarkConfig) -> dict[str, Any]:
                 store = KVCacheStore(kv_dir / str(index), hot_bytes=plan.kv_bytes) if config.kv_cache == "disk" else None
                 cache = model.new_cache(store)
                 started = time.perf_counter()
-                result = generate_greedy_cached_with_cache(model, token_ids, config.max_new_tokens, cache)
+                eos_token_id = tokenizer.EOS if isinstance(tokenizer, CodeTokenizer) else None
+                result = generate_greedy_cached_with_cache(model, token_ids, config.max_new_tokens, cache, eos_token_id)
                 durations.append(time.perf_counter() - started)
                 generated_tokens += max(0, len(result) - len(token_ids))
                 peak_weight_bytes = max(peak_weight_bytes, model.weights.cached_bytes)
